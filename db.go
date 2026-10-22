@@ -253,6 +253,10 @@ func migrate(db *sql.DB) error {
 	if err := addColumn(db, "avatars", "pixel", "INTEGER NOT NULL DEFAULT 0"); err != nil {
 		return err
 	}
+	// When the Steam price in meta was last checked (prices.go).
+	if err := addColumn(db, "games", "price_checked_at", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return err
+	}
 	for _, c := range [][2]string{
 		{"link_title", "TEXT NOT NULL DEFAULT ''"},
 		{"link_image", "TEXT NOT NULL DEFAULT ''"},

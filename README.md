@@ -11,6 +11,12 @@ A small self-hosted app for a group of friends to plan which games to buy and pl
 
   Each game links out to Steam, SteamDB, ProtonDB and IGDB.
 - Each person can vote on a game (Want to play / Maybe / Pass), mark whether they own it, and leave notes.
+- Top Games, at the top of the boards page, has three tabs:
+  - **Most wanted:** the games with the most "Want to play" votes, with the faces of who wants them.
+  - **Most owned:** the games the most people own.
+  - **On sale for you:** discounted games that are on your boards, or that you want to play, and that you don't own yet.
+
+  The same game on several boards counts once. Steam prices are re-checked in the background, 100 games at a time every half hour, for any price over 6 hours old.
 - A site-wide chat, plus one per board. Posts can link a game or a song.
 - Music: paste Spotify or YouTube (Music) links into chat, or give a game a soundtrack. Everything plays in a small floating player with a queue and a volume slider (YouTube only). The Music page lists everything shared and has playlists: mix songs from both services, then link a playlist in chat or put it on a game. Only a playlist's owner can change it. Spotify plays 30-second previews unless you're logged in to Spotify in the same browser; the player shows a "Log in to Spotify" button when that happens. Some browsers, like Safari, keep that login away from players on other sites.
 - A weekly ticker along the bottom, profile pictures and themes.
@@ -160,6 +166,8 @@ columns.go    per-board columns
 feed.go       site and board chat
 music.go      Spotify / YouTube links, game soundtracks, the Music page
 playlists.go  people's own playlists
+highlights.go Top Games (most wanted, most owned, on sale for you)
+prices.go     background Steam price checks
 ticker.go     the weekly ticker
 avatar.go     profile pictures (resized and compressed on upload)
 themes.go     preset and shared themes

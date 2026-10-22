@@ -2242,7 +2242,10 @@ function closeModal() {
 // ---------- boards list ----------
 
 async function renderBoards() {
-  const boards = await pageData('/boards');
+  const [boards, highlights] = await Promise.all([
+    pageData('/boards'),
+    pageData('/highlights').catch(() => null), // the boards still show if this fails
+  ]);
   state.boards = boards;
   state.board = null;
   state.games = [];
@@ -2269,12 +2272,88 @@ async function renderBoards() {
     h('div', { class: 'page-head' },
       h('h1', {}, 'Boards'),
       h('p', { class: 'muted' }, "Everyone can see every board. Only a board's owner and the editors they add can change it.")),
+    highlights ? highlightsPanel(highlights) : null,
     h('h2', { class: 'section-title' }, 'My boards'),
     h('div', { class: 'board-grid' }, mine.map(boardCard), win('New Board', { cls: 'new-board' }, form)),
     h('h2', { class: 'section-title' }, 'Other boards'),
     others.length
       ? h('div', { class: 'board-grid' }, others.map(boardCard))
       : h('p', { class: 'section-empty' }, 'No other boards yet.'));
+}
+
+// ---- top games ----
+
+// The panel at the top of the boards page: games most people want to play,
+// games most people own, and games on your lists that are on sale (and that
+// you don't own). The same game on several boards counts once.
+const HIGHLIGHT_TABS = [
+  ['wanted', 'Most wanted', 'Nobody has marked a game "Want to play" yet. Open a game and pick it under "Your take".'],
+  ['owned', 'Most owned', 'Nobody has ticked "I own it" on a game yet.'],
+  ['sales', 'On sale for you', "Nothing on your boards (or that you want to play) is on sale right now, apart from games you own. Steam prices are checked every few hours."],
+];
+
+function highlightsPanel(data) {
+  let tab = load('highlightsTab');
+  if (!HIGHLIGHT_TABS.some(([key]) => key === tab)) tab = 'wanted';
+  const tabs = h('div', { class: 'feed-tabs', role: 'tablist', 'aria-label': 'Top games' });
+  const strip = h('div', { class: 'hl-strip', role: 'tabpanel' });
+  const draw = () => {
+    tabs.replaceChildren(...HIGHLIGHT_TABS.map(([key, label]) => h('button', {
+      type: 'button', role: 'tab', class: 'feed-tab' + (tab === key ? ' on' : ''), 'aria-selected': String(tab === key),
+      onclick: () => { tab = key; store('highlightsTab', key); draw(); },
+    }, label, data[key].length ? h('span', { class: 'hl-count' }, String(data[key].length)) : null)));
+    const list = data[tab];
+    const empty = HIGHLIGHT_TABS.find(([key]) => key === tab)[2];
+    strip.replaceChildren(...(list.length ? list.map((g, i) => highlightTile(g, i, tab)) : [h('p', { class: 'muted xs hl-empty' }, empty)]));
+    strip.scrollLeft = 0;
+  };
+  // The wheel scrolls the row sideways, until it reaches an end; then the page scrolls.
+  strip.addEventListener('wheel', e => {
+    if (Math.abs(e.deltaX) > Math.abs(e.deltaY)) return;
+    const max = strip.scrollWidth - strip.clientWidth;
+    if (max <= 0 || (e.deltaY < 0 && strip.scrollLeft <= 0) || (e.deltaY > 0 && strip.scrollLeft >= max - 1)) return;
+    e.preventDefault();
+    strip.scrollLeft += e.deltaY * (e.deltaMode === 1 ? 40 : 1);
+  }, { passive: false });
+  draw();
+  return win('Top Games', { cls: 'highlights' }, tabs, strip);
+}
+
+// highlightTile is one game in the top games row. Clicking it opens the game
+// on its board.
+function highlightTile(g, i, tab) {
+  const img = safeUrl(g.image);
+  const open = () => { state.pendingGame = g.gameId; location.hash = `#/board/${g.boardId}`; };
+  const n = g.users.length;
+  const p = g.price;
+  const shown = g.users.slice(0, 6);
+  const people = n ? h('div', { class: 'hl-people', title: g.users.map(u => u.username).join(', ') },
+    shown.map(u => avatar(u.id, u.username, 'tiny', u.username)),
+    n > shown.length ? h('span', { class: 'hl-more' }, `+${n - shown.length}`) : null) : null;
+  let line;
+  if (tab === 'wanted') line = `${n} want${n === 1 ? 's' : ''} to play`;
+  else if (tab === 'owned') line = `${n} own${n === 1 ? 's' : ''} it`;
+  else line = n ? `${n} want${n === 1 ? 's' : ''} to play` : null;
+  return h('div', {
+    class: 'hl-tile', role: 'link', tabindex: '0', title: `Open ${g.title} on ${g.boardName}`,
+    onclick: open, onkeydown: e => { if (e.key === 'Enter' && e.target === e.currentTarget) open(); },
+  },
+  h('div', { class: 'hl-img' },
+    img ? h('img', { src: img, alt: '', loading: 'lazy' }) : h('span', { class: 'placeholder' }, g.title.slice(0, 1)),
+    tab === 'sales'
+      ? h('span', { class: 'hl-tag sale' }, `-${p.discountPercent}%`)
+      : h('span', { class: 'hl-tag' + (i === 0 ? ' first' : '') }, `#${i + 1}`)),
+  h('div', { class: 'hl-body' },
+    h('div', { class: 'hl-title' }, g.title),
+    tab === 'sales' ? h('div', { class: 'hl-price' },
+      h('strong', {}, p.final), p.initial ? [' ', h('s', {}, p.initial)] : null) : null,
+    line ? h('div', { class: 'hl-line' }, line) : null,
+    people,
+    h('div', { class: 'hl-where' }, g.boards > 1 ? `on ${g.boardName} +${g.boards - 1} more` : `on ${g.boardName}`),
+    tab === 'sales' && g.steamAppId ? h('a', {
+      class: 'hl-store', href: `https://store.steampowered.com/app/${g.steamAppId}/`, target: '_blank', rel: 'noopener noreferrer',
+      onclick: e => e.stopPropagation(),
+    }, 'Steam ↗') : null));
 }
 
 // isMyBoard is true for boards the user owns or was added to as an editor

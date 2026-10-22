@@ -565,8 +565,8 @@ func (a *App) saveMeta(gameID int64, res FetchResult) error {
 		return err
 	}
 	t := now()
-	_, err = a.db.Exec(`UPDATE games SET steam_appid = ?, igdb_id = ?, meta = ?, meta_updated_at = ?, updated_at = ? WHERE id = ?`,
-		res.SteamAppID, res.IGDBID, string(meta), t, t, gameID)
+	_, err = a.db.Exec(`UPDATE games SET steam_appid = ?, igdb_id = ?, meta = ?, meta_updated_at = ?, price_checked_at = ?, updated_at = ? WHERE id = ?`,
+		res.SteamAppID, res.IGDBID, string(meta), t, t, t, gameID)
 	return err
 }
 
