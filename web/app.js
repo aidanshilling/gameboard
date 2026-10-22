@@ -1405,6 +1405,7 @@ const player = {
   endedAt: -1, // queue index we've already moved on from
   preview: false, // Spotify is only playing 30-second previews
   ytReady: null,
+  volume: 80, // YouTube only; 0-100
 };
 
 // The parts of the widget that redraw, around an embed area that never moves
@@ -1412,7 +1413,14 @@ const player = {
 const musicBar = h('div', { class: 'win-bar music-bar' });
 const musicEmbed = h('div', { class: 'music-embed' });
 const musicInfo = h('div', { class: 'music-info' });
-const musicEl = h('section', { class: 'win music', hidden: true, 'aria-label': 'Music player' }, musicBar, musicEmbed, musicInfo);
+// The volume slider is built once, not redrawn, so a drag isn't cut short.
+// Only YouTube's player lets a page set its volume; Spotify's embed doesn't.
+const volumeSlider = h('input', { type: 'range', min: 0, max: 100, step: 1, 'aria-label': 'Volume' });
+const volumeValue = h('span', { class: 'xs music-volume-value' });
+const volumeNote = h('span', { class: 'xs muted' }, "Spotify's player has no volume control here; use your device's volume.");
+const volumeLabel = h('span', { class: 'xs music-volume-label', 'aria-hidden': 'true' }, 'VOL');
+const musicVolume = h('div', { class: 'music-volume', hidden: true }, volumeLabel, volumeSlider, volumeValue, volumeNote);
+const musicEl = h('section', { class: 'win music', hidden: true, 'aria-label': 'Music player' }, musicBar, musicEmbed, musicVolume, musicInfo);
 document.body.appendChild(musicEl);
 
 // The queue survives a reload (in this browser), but doesn't start playing by itself.
@@ -1422,12 +1430,38 @@ try {
     player.queue = saved.queue;
     player.index = Math.min(saved.index ?? -1, saved.queue.length - 1);
     player.collapsed = !!saved.collapsed;
+    if (Number.isFinite(saved.volume)) player.volume = Math.min(100, Math.max(0, saved.volume));
   }
 } catch { /* empty queue */ }
 
 function saveMusic() {
-  store('music', JSON.stringify({ queue: player.queue, index: player.index, collapsed: player.collapsed }));
+  store('music', JSON.stringify({ queue: player.queue, index: player.index, collapsed: player.collapsed, volume: player.volume }));
 }
+
+function showVolume() {
+  volumeSlider.value = player.volume;
+  volumeValue.textContent = `${player.volume}%`;
+}
+
+function setVolume(v) {
+  player.volume = v;
+  showVolume();
+  if (player.engineKind === 'youtube' && player.engine) {
+    try {
+      player.engine.setVolume(v);
+      if (v > 0 && player.engine.isMuted()) player.engine.unMute();
+    } catch { /* player not ready yet; onReady applies it */ }
+  }
+  saveMusic();
+}
+
+volumeSlider.addEventListener('input', () => setVolume(Number(volumeSlider.value)));
+// The wheel over the slider nudges it, a few percent a notch.
+volumeSlider.addEventListener('wheel', e => {
+  e.preventDefault();
+  setVolume(Math.min(100, Math.max(0, player.volume + (e.deltaY < 0 ? 5 : -5))));
+}, { passive: false });
+showVolume();
 
 function loadScript(src) {
   return new Promise((resolve, reject) => {
@@ -1476,7 +1510,11 @@ async function loadYouTube(item, target, token) {
     opts.videoId = item.extId;
   }
   opts.events = {
-    onReady: e => e.target.playVideo(),
+    onReady: e => {
+      e.target.setVolume(player.volume);
+      if (player.volume > 0) e.target.unMute();
+      e.target.playVideo();
+    },
     onStateChange: e => {
       if (e.data !== YT.PlayerState.ENDED) return;
       // A YouTube playlist plays through by itself; move on after its last video.
@@ -1674,6 +1712,12 @@ function drawMusic() {
     }));
 
   const now = player.started && player.queue[player.index];
+  musicVolume.hidden = !now;
+  const youtube = now && now.provider === 'youtube';
+  volumeLabel.hidden = !youtube;
+  volumeSlider.hidden = !youtube;
+  volumeValue.hidden = !youtube;
+  volumeNote.hidden = youtube;
   musicInfo.replaceChildren(...[
     now ? null : h('button', { class: 'btn primary block', type: 'button', onclick: () => playIndex(Math.max(player.index, 0)) }, `▶ Play ${player.queue.length > 1 ? 'the queue' : item.title}`),
     now && now.provider === 'spotify' ? spotifyHint() : null,

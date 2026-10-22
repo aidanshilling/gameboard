@@ -982,6 +982,25 @@ button.game-chip:hover, .feed-result:hover { background: var(--peach); }
 .music-embed.youtube { aspect-ratio: 16 / 9; }
 .music-embed.spotify { height: 152px; background: transparent; }
 .music-embed iframe { display: block; width: 100%; height: 100%; border: 0; }
+.music-volume { display: flex; align-items: center; gap: 8px; padding: 8px 10px 0; }
+.music-volume[hidden], .music-volume [hidden] { display: none; }
+.music-volume-label { font-weight: 700; letter-spacing: 0.08em; }
+.music-volume input[type=range] {
+  flex: 1;
+  min-width: 0;
+  height: 16px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  box-shadow: none;
+  accent-color: var(--orange);
+  cursor: pointer;
+}
+.music-volume input[type=range]:focus { box-shadow: none; outline: none; }
+.music-volume input[type=range]:focus-visible { outline: 1px dotted var(--ink); outline-offset: 2px; }
+.music-volume-value { width: 4ch; text-align: right; font-variant-numeric: tabular-nums; }
+.music.collapsed .music-volume { display: none; }
 .music-fail { margin: 0; padding: 10px; background: var(--paper); color: var(--ink); }
 .music-info { display: flex; flex-direction: column; gap: 8px; padding: 10px; overflow-y: auto; max-height: 300px; }
 .music-info h4 { margin: 0; }
