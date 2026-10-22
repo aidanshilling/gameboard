@@ -21,7 +21,7 @@ var themePresets = map[string]bool{
 
 // themeKeys are the colours a theme may set (the frontend maps them to CSS variables).
 var themeKeys = map[string]bool{
-	"desk": true, "deskInk": true, "paper": true, "surface": true, "ink": true, "muted": true,
+	"desk": true, "deskInk": true, "paper": true, "surface": true, "ink": true, "line": true, "muted": true,
 	"accent": true, "accentInk": true, "link": true, "beak": true,
 	"periwinkle": true, "peach": true, "ice": true, "mint": true, "sun": true, "lilac": true, "rose": true, "stone": true,
 }

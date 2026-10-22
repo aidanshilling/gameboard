@@ -635,7 +635,8 @@ const THEME_FIELDS = [
   ['deskInk', '--desk-ink', 'Text on the background'],
   ['paper', '--paper', 'Windows'],
   ['surface', '--white', 'Cards & boxes'],
-  ['ink', '--ink', 'Text & borders'],
+  ['ink', '--ink', 'Text'],
+  ['line', '--line', 'Borders & lines'],
   ['muted', '--muted', 'Faded text'],
   ['accent', '--orange', 'Accent (main buttons)'],
   ['accentInk', '--accent-ink', 'Text on the accent'],
@@ -645,6 +646,14 @@ const THEME_FIELDS = [
 const THEME_COLUMN_FIELDS = ['periwinkle', 'peach', 'ice', 'mint', 'sun', 'lilac', 'rose', 'stone']
   .map(k => [k, `--${k}`, cap(k)]);
 const ALL_THEME_FIELDS = [...THEME_FIELDS, ...THEME_COLUMN_FIELDS];
+
+// fullTheme fills in whatever a theme leaves out from the default. Borders
+// were once the text colour, so themes without their own borders keep that.
+function fullTheme(vars) {
+  const t = { ...THEME_PRESETS.penguin.vars, ...vars };
+  if (!t.line) t.line = t.ink;
+  return t;
+}
 
 const THEME_PRESETS = {
   penguin: {
@@ -757,7 +766,7 @@ function applyTheme(vars) {
   const key = JSON.stringify(vars);
   if (key === appliedTheme) return false;
   appliedTheme = key;
-  const t = { ...THEME_PRESETS.penguin.vars, ...vars };
+  const t = fullTheme(vars);
   const root = document.documentElement;
   for (const [key, cssVar] of ALL_THEME_FIELDS) root.style.setProperty(cssVar, t[key]);
   const [r, g, b] = hexToRgb(t.deskInk);
@@ -792,7 +801,7 @@ try {
 
 // themeSwatch is a little picture of a theme: a window on its background.
 function themeSwatch(vars) {
-  const t = { ...THEME_PRESETS.penguin.vars, ...vars };
+  const t = fullTheme(vars);
   const bar = h('span', { class: 'sw-bar' });
   const btn = h('span', { class: 'sw-btn' });
   const text = h('span', { class: 'sw-text' });
@@ -800,11 +809,11 @@ function themeSwatch(vars) {
   const sw = h('span', { class: 'theme-swatch' }, win);
   sw.style.background = t.desk;
   win.style.background = t.paper;
-  win.style.borderColor = t.ink;
-  bar.style.background = `repeating-linear-gradient(${t.ink} 0 1px, transparent 1px 2px)`;
+  win.style.borderColor = t.line;
+  bar.style.background = `repeating-linear-gradient(${t.line} 0 1px, transparent 1px 2px)`;
   text.style.background = t.muted;
   btn.style.background = t.accent;
-  btn.style.borderColor = t.ink;
+  btn.style.borderColor = t.line;
   return sw;
 }
 
@@ -872,7 +881,7 @@ async function openThemesModal() {
   // edit shows the editor for one of your themes (theme), or a new one
   // starting from the given name and colours.
   const edit = (theme, startName, startVars) => {
-    const vars = { ...THEME_PRESETS.penguin.vars, ...(theme ? theme.vars : startVars) };
+    const vars = fullTheme(theme ? theme.vars : startVars);
     const name = h('input', { value: theme ? theme.name : startName, maxlength: 40, 'aria-label': 'Theme name' });
     const shared = h('input', { type: 'checkbox', checked: theme ? theme.shared : false });
     const field = ([key, , label]) => {
