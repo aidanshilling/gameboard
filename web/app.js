@@ -521,7 +521,8 @@ function openProfileModal() {
             h('button', { class: 'btn primary sm', onclick: () => fileInput.click() }, has ? 'Change picture' : 'Choose picture'),
             has ? h('button', { class: 'btn danger sm', onclick: remove }, 'Remove picture') : null))),
       fileInput,
-      passwordSection());
+      passwordSection(),
+      h('div', { class: 'row end profile-foot' }, h('button', { class: 'btn', type: 'button', onclick: logout }, 'Log out')));
   };
 
   const startCrop = file => {
@@ -976,13 +977,13 @@ function menubar(adminLink, modeSwitch) {
     h('a', { href: '#/', class: 'menu-item' }, 'Games'),
     h('a', { href: '#/music', class: 'menu-item' }, 'Music'),
     h('a', { href: '#/movies', class: 'menu-item' }, 'Movies'),
+    h('button', { class: 'menu-item', onclick: openThemesModal }, 'Themes'),
+    h('div', { class: 'spacer' }),
+    // Admins' controls sit on the right, by their name.
     adminLink,
     modeSwitch,
-    h('button', { class: 'menu-item', onclick: openThemesModal }, 'Themes'),
-    h('button', { class: 'menu-item', onclick: logout }, 'Log Out'),
-    h('div', { class: 'spacer' }),
-    // Your picture and name open your profile (picture and password).
-    h('button', { class: 'menu-item whoami', type: 'button', title: 'Your profile: picture and password', onclick: openProfileModal },
+    // Your picture and name open your profile (picture, password, log out).
+    h('button', { class: 'menu-item whoami', type: 'button', title: 'Your profile: picture, password and log out', onclick: openProfileModal },
       avatar(state.user.id, state.user.username, 'tiny'), state.user.username),
     h('span', { class: 'menu-item static', id: 'clock' }, clockText()));
   const toggle = h('button', {

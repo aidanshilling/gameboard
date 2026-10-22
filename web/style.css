@@ -270,6 +270,7 @@ button.win-close::after { transform: translate(-50%, -50%) rotate(-45deg); }
 .menu-item.static { cursor: default; color: var(--muted); }
 .menu-item.whoami:focus-visible { outline: 2px solid var(--orange); outline-offset: -2px; }
 .menu-item.whoami:hover .dot { color: var(--ink); } /* initials stay readable on the highlight */
+.profile-foot { padding-top: 12px; border-top: 1px dotted var(--ink); }
 /* On desktop the items sit straight in the bar; on phones they become a dropdown. */
 .menu-items { display: contents; }
 .menu-toggle { display: none; }
