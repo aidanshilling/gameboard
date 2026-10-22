@@ -3045,12 +3045,12 @@ function drawBoard() {
 }
 
 // sideScrollOnHeaders makes the mouse wheel scroll the columns sideways while
-// the pointer is over a column's title bar, the scrollbar along the bottom
-// (or the gaps between columns), or the "+ New column" tile. Over a column's
-// cards it scrolls that column as usual.
+// the pointer is over the scrollbar along the bottom (or the gaps between
+// columns) or the "+ New column" tile. Over a column, title bar included, it
+// scrolls as usual.
 function sideScrollOnHeaders(cols) {
   cols.addEventListener('wheel', e => {
-    const sideways = e.target === cols || e.target.closest('.column .win-bar, .add-col');
+    const sideways = e.target === cols || e.target.closest('.add-col');
     if (!sideways) return;
     if (Math.abs(e.deltaX) > Math.abs(e.deltaY)) return; // already scrolling sideways
     e.preventDefault();

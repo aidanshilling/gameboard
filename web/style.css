@@ -474,8 +474,11 @@ button.win-close::after { transform: translate(-50%, -50%) rotate(-45deg); }
 /* Cards keep their size and the column scrolls, rather than squashing them to fit. */
 .col-body > * { flex-shrink: 0; }
 .board-main .add-col { min-height: 0; }
-.column .win-bar { background-color: var(--col); }
-.column .win-close, .column .win-title, .column .win-bar .count { background: var(--col); box-shadow: 0 0 0 3px var(--col); }
+/* Column title bars are a solid block of the column's colour: no stripes, so
+   the close box, name and count sit straight on it. */
+.column .win-bar { background: var(--col); }
+.column .win-close, .column .win-title, .column .win-bar .count { background: transparent; box-shadow: none; }
+.column .win-bar .count { opacity: 0.7; }
 .col-c-periwinkle { --col: var(--periwinkle); }
 .col-c-peach { --col: var(--peach); }
 .col-c-ice { --col: var(--ice); }
