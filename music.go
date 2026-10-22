@@ -321,7 +321,8 @@ func (a *App) handleMusicShares(w http.ResponseWriter, r *http.Request, u *User)
 func (a *App) sweepMusic() {
 	if _, err := a.db.Exec(`DELETE FROM music WHERE created_at < ?
 		AND id NOT IN (SELECT music_id FROM posts WHERE music_id IS NOT NULL)
-		AND id NOT IN (SELECT music_id FROM game_music)`, now()-86400); err != nil {
+		AND id NOT IN (SELECT music_id FROM game_music)
+		AND id NOT IN (SELECT music_id FROM playlist_items)`, now()-86400); err != nil {
 		log.Printf("sweep music: %v", err)
 	}
 }

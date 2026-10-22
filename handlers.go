@@ -395,7 +395,7 @@ type Interest struct {
 const gameSelect = `SELECT g.id, g.board_id, g.title, COALESCE(g.column_id, 0), g.position, g.steam_appid, g.igdb_id,
 	g.meta, g.meta_updated_at, COALESCE(u.username, ''), g.created_at, g.updated_at,
 	(SELECT COUNT(*) FROM notes n WHERE n.game_id = g.id),
-	(SELECT COUNT(*) FROM game_music gm WHERE gm.game_id = g.id)
+	(SELECT COUNT(*) FROM game_music gm WHERE gm.game_id = g.id) + (SELECT COUNT(*) FROM game_playlists gp WHERE gp.game_id = g.id)
 	FROM games g LEFT JOIN users u ON u.id = g.added_by `
 
 // queryGames loads games matching where (which may reference alias g) along with their interests.
@@ -531,7 +531,12 @@ func (a *App) writeGameDetail(w http.ResponseWriter, status int, id int64) {
 		serverErr(w, err)
 		return
 	}
-	writeJSON(w, status, map[string]any{"game": g, "notes": notes, "music": music})
+	playlists, err := a.gamePlaylists(id)
+	if err != nil {
+		serverErr(w, err)
+		return
+	}
+	writeJSON(w, status, map[string]any{"game": g, "notes": notes, "music": music, "playlists": playlists})
 }
 
 func (a *App) nextPosition(columnID int64) (float64, error) {

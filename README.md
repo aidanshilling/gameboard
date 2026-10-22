@@ -12,7 +12,7 @@ A small self-hosted app for a group of friends to plan which games to buy and pl
   Each game links out to Steam, SteamDB, ProtonDB and IGDB.
 - Each person can vote on a game (Want to play / Maybe / Pass), mark whether they own it, and leave notes.
 - A site-wide chat, plus one per board. Posts can link a game or a song.
-- Music: paste Spotify or YouTube (Music) links into chat, or give a game a soundtrack. Everything plays in a small floating player with a queue, and the Music page lists everything shared. Spotify plays 30-second previews unless you're logged in to Spotify in the same browser; the player shows a "Log in to Spotify" button when that happens. Some browsers, like Safari, keep that login away from players on other sites.
+- Music: paste Spotify or YouTube (Music) links into chat, or give a game a soundtrack. Everything plays in a small floating player with a queue and a volume slider (YouTube only). The Music page lists everything shared and has playlists: mix songs from both services, then link a playlist in chat or put it on a game. Only a playlist's owner can change it. Spotify plays 30-second previews unless you're logged in to Spotify in the same browser; the player shows a "Log in to Spotify" button when that happens. Some browsers, like Safari, keep that login away from players on other sites.
 - A weekly ticker along the bottom, profile pictures and themes.
 
 It runs as one Go binary with the frontend embedded, plus one SQLite file. No CGO and no Node build step.
@@ -128,11 +128,12 @@ sqlite3 gameboard.db ".backup backup.db"
 - **Boards:** up to 30 owned per person.
 - **Games:** up to 300 per board.
 - **Notes:** up to 200 per game.
-- **Music:** up to 20 songs or playlists per game. Each person can look up 30 new links per 5 minutes.
+- **Music:** up to 20 songs and 10 playlists per game. Each person can look up 30 new links per 5 minutes.
+- **Playlists:** up to 50 per person, 200 songs each.
 
 Disk isn't the constraint; a game with its metadata is about 1.5 KB. These caps keep boards quick to load and cheap to poll. They live at the top of `handlers.go`.
 
-Pages that refresh themselves (boards every 15 seconds, chat every 20) send back a fingerprint of what they already have. The server replies `304 Not Modified` with no body unless something actually changed, so idle tabs use almost no bandwidth.
+Moving between pages draws straight away from the data the page had last time, then checks with the server and redraws only if something changed. The menu, chat and footer stay in place. Pages that refresh themselves (boards every 15 seconds, chat every 20) send back a fingerprint of what they already have. The server replies `304 Not Modified` with no body unless something actually changed, so idle tabs use almost no bandwidth.
 
 ## Security notes
 
@@ -158,6 +159,7 @@ members.go    board editors and join requests
 columns.go    per-board columns
 feed.go       site and board chat
 music.go      Spotify / YouTube links, game soundtracks, the Music page
+playlists.go  people's own playlists
 ticker.go     the weekly ticker
 avatar.go     profile pictures (resized and compressed on upload)
 themes.go     preset and shared themes

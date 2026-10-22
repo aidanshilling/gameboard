@@ -45,9 +45,12 @@ type Post struct {
 	Username  string    `json:"username"`
 	Body      string    `json:"body"`
 	CreatedAt int64     `json:"createdAt"`
-	Game      *PostGame `json:"game"`  // a game on a board
-	Link      *PostLink `json:"link"`  // or one from Steam/IGDB
-	Music     *Music    `json:"music"` // a song or playlist
+	Game      *PostGame `json:"game"`     // a game on a board
+	Link      *PostLink `json:"link"`     // or one from Steam/IGDB
+	Music     *Music    `json:"music"`    // a song or a Spotify/YouTube playlist
+	Playlist  *Playlist `json:"playlist"` // or one of our own playlists
+	// HadAttachment: the post shared something that's since been deleted.
+	HadAttachment bool `json:"hadAttachment,omitempty"`
 }
 
 // gameImage picks a game's picture out of its stored metadata.
@@ -69,7 +72,7 @@ const postSelect = `SELECT p.id, p.user_id, u.username, p.body, p.created_at,
 	g.id, COALESCE(g.title, ''), COALESCE(g.board_id, 0), COALESCE(b.name, ''), COALESCE(g.meta, ''),
 	p.link_title, p.link_image, p.link_steam, p.link_igdb, p.link_igdb_url,
 	m.id, COALESCE(m.provider, ''), COALESCE(m.kind, ''), COALESCE(m.ext_id, ''), COALESCE(m.title, ''),
-	COALESCE(m.artist, ''), COALESCE(m.thumb, '')
+	COALESCE(m.artist, ''), COALESCE(m.thumb, ''), p.playlist_id
 	FROM posts p JOIN users u ON u.id = p.user_id
 	LEFT JOIN games g ON g.id = p.game_id LEFT JOIN boards b ON b.id = g.board_id
 	LEFT JOIN music m ON m.id = p.music_id `
@@ -83,7 +86,7 @@ func (a *App) queryPosts(where string, args ...any) ([]Post, error) {
 	posts := []Post{}
 	for rows.Next() {
 		var p Post
-		var gameID, linkSteam, linkIGDB, musicID sql.NullInt64
+		var gameID, linkSteam, linkIGDB, musicID, playlistID sql.NullInt64
 		var g PostGame
 		var l PostLink
 		var mu Music
@@ -91,8 +94,11 @@ func (a *App) queryPosts(where string, args ...any) ([]Post, error) {
 		if err := rows.Scan(&p.ID, &p.UserID, &p.Username, &p.Body, &p.CreatedAt,
 			&gameID, &g.Title, &g.BoardID, &g.BoardName, &meta,
 			&l.Title, &l.Image, &linkSteam, &linkIGDB, &l.IGDBURL,
-			&musicID, &mu.Provider, &mu.Kind, &mu.ExtID, &mu.Title, &mu.Artist, &mu.Thumb); err != nil {
+			&musicID, &mu.Provider, &mu.Kind, &mu.ExtID, &mu.Title, &mu.Artist, &mu.Thumb, &playlistID); err != nil {
 			return nil, err
+		}
+		if playlistID.Valid {
+			p.Playlist = &Playlist{ID: playlistID.Int64} // filled in below
 		}
 		if musicID.Valid {
 			mu.ID = musicID.Int64
@@ -115,7 +121,35 @@ func (a *App) queryPosts(where string, args ...any) ([]Post, error) {
 		}
 		posts = append(posts, p)
 	}
-	return posts, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return posts, a.fillPostPlaylists(posts)
+}
+
+// fillPostPlaylists swaps the playlist ids on posts for the playlists as
+// they are now, and marks posts whose only attachment has been deleted.
+func (a *App) fillPostPlaylists(posts []Post) error {
+	var ids []int64
+	for _, p := range posts {
+		if p.Playlist != nil {
+			ids = append(ids, p.Playlist.ID)
+		}
+	}
+	found, err := a.playlistsByID(ids)
+	if err != nil {
+		return err
+	}
+	for i := range posts {
+		p := &posts[i]
+		if p.Playlist != nil {
+			p.Playlist = found[p.Playlist.ID]
+		}
+		// Captions are optional only when something's attached, so an empty
+		// post with nothing attached any more had something deleted.
+		p.HadAttachment = p.Body == "" && p.Game == nil && p.Link == nil && p.Music == nil && p.Playlist == nil
+	}
+	return nil
 }
 
 // writeFeed responds with a page of posts, newest first, from the site-wide
@@ -182,13 +216,14 @@ func (a *App) addPost(w http.ResponseWriter, r *http.Request, u *User, boardID *
 		GameID     *int64 `json:"gameId"`     // a game on a board
 		SteamAppID *int64 `json:"steamAppId"` // or one from Steam
 		IGDBID     *int64 `json:"igdbId"`     // or IGDB
-		MusicID    *int64 `json:"musicId"`    // a song or playlist
+		MusicID    *int64 `json:"musicId"`    // a song or Spotify/YouTube playlist
+		PlaylistID *int64 `json:"playlistId"` // or one of our playlists
 	}
 	if !readJSON(w, r, &req) {
 		return
 	}
 	// Text is optional when the post shares a game or some music.
-	attached := req.GameID != nil || req.SteamAppID != nil || req.IGDBID != nil || req.MusicID != nil
+	attached := req.GameID != nil || req.SteamAppID != nil || req.IGDBID != nil || req.MusicID != nil || req.PlaylistID != nil
 	body, ok := cleanText(req.Body, postMaxLen)
 	if !ok || (body == "" && !attached) {
 		writeErr(w, http.StatusBadRequest, "posts must be 1-"+strconv.Itoa(postMaxLen)+" characters")
@@ -202,6 +237,9 @@ func (a *App) addPost(w http.ResponseWriter, r *http.Request, u *User, boardID *
 			writeErr(w, http.StatusBadRequest, "that song or playlist isn't available any more")
 			return
 		}
+	}
+	if req.PlaylistID != nil && !a.checkPlaylistID(w, *req.PlaylistID) {
+		return
 	}
 	if blocked(body) {
 		writeErr(w, http.StatusBadRequest, blockedMessage)
@@ -240,9 +278,9 @@ func (a *App) addPost(w http.ResponseWriter, r *http.Request, u *User, boardID *
 		}
 		link = l
 	}
-	res, err := a.db.Exec(`INSERT INTO posts(user_id, board_id, body, game_id, link_title, link_image, link_steam, link_igdb, link_igdb_url, music_id, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		u.ID, boardID, body, req.GameID, link.Title, link.Image, link.SteamAppID, link.IGDBID, link.IGDBURL, req.MusicID, now())
+	res, err := a.db.Exec(`INSERT INTO posts(user_id, board_id, body, game_id, link_title, link_image, link_steam, link_igdb, link_igdb_url, music_id, playlist_id, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		u.ID, boardID, body, req.GameID, link.Title, link.Image, link.SteamAppID, link.IGDBID, link.IGDBURL, req.MusicID, req.PlaylistID, now())
 	if err != nil {
 		serverErr(w, err)
 		return

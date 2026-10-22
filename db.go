@@ -91,6 +91,32 @@ CREATE TABLE IF NOT EXISTS game_music (
 	PRIMARY KEY (game_id, music_id)
 );
 
+-- People's own playlists of songs from the music table, in order.
+CREATE TABLE IF NOT EXISTS playlists (
+	id         INTEGER PRIMARY KEY,
+	user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+	name       TEXT NOT NULL,
+	created_at INTEGER NOT NULL,
+	updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS playlists_user ON playlists(user_id);
+CREATE TABLE IF NOT EXISTS playlist_items (
+	playlist_id INTEGER NOT NULL REFERENCES playlists(id) ON DELETE CASCADE,
+	music_id    INTEGER NOT NULL REFERENCES music(id) ON DELETE CASCADE,
+	position    REAL NOT NULL,
+	added_at    INTEGER NOT NULL,
+	PRIMARY KEY (playlist_id, music_id)
+);
+
+-- Playlists on a game, next to its own songs (game_music).
+CREATE TABLE IF NOT EXISTS game_playlists (
+	game_id     INTEGER NOT NULL REFERENCES games(id) ON DELETE CASCADE,
+	playlist_id INTEGER NOT NULL REFERENCES playlists(id) ON DELETE CASCADE,
+	added_by    INTEGER REFERENCES users(id) ON DELETE SET NULL,
+	created_at  INTEGER NOT NULL,
+	PRIMARY KEY (game_id, playlist_id)
+);
+
 -- Chat posts: site-wide when board_id is NULL, otherwise that board's chat.
 -- A post can point at a game on any board, or at a game from Steam/IGDB
 -- (the link_* columns, looked up when it's posted).
@@ -235,6 +261,7 @@ func migrate(db *sql.DB) error {
 		{"link_igdb_url", "TEXT NOT NULL DEFAULT ''"},
 		{"board_id", "INTEGER REFERENCES boards(id) ON DELETE CASCADE"},
 		{"music_id", "INTEGER REFERENCES music(id) ON DELETE SET NULL"},
+		{"playlist_id", "INTEGER REFERENCES playlists(id) ON DELETE SET NULL"},
 	} {
 		if err := addColumn(db, "posts", c[0], c[1]); err != nil {
 			return err

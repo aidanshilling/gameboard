@@ -44,6 +44,9 @@ const state = {
   feedTab: load('feedTab') === 'site' ? 'site' : 'board', // which chat a board page shows
   channels: {}, // chat channels by key ('site', 'board:<id>'): posts, draft, linked game…
   pendingGame: null, // game to open once its board has loaded (from a chat link)
+  playlists: null, // everyone's playlists (summaries), as last loaded
+  onPlaylistChange: null, // the page's hook for when a song is added to a playlist
+  currentPage: null, // draws the page that's showing (again, with newer data)
 };
 
 const $app = document.getElementById('app');
@@ -96,6 +99,7 @@ async function api(method, path, body) {
     opts.body = JSON.stringify(body);
   }
   const res = await fetch('/api' + path, opts);
+  if (method !== 'GET') forgetPages();
   const text = await res.text();
   let data = null;
   if (text) {
@@ -174,8 +178,11 @@ function avatar(userId, name, cls = '', title = null) {
 async function loadAvatars() {
   try {
     const users = await api('GET', '/users');
-    state.avatars = Object.fromEntries(users.filter(u => u.avatar).map(u => [u.id, { v: u.avatar, pixel: !!u.avatarPixel }]));
+    const avatars = Object.fromEntries(users.filter(u => u.avatar).map(u => [u.id, { v: u.avatar, pixel: !!u.avatarPixel }]));
+    const changed = JSON.stringify(avatars) !== JSON.stringify(state.avatars);
+    state.avatars = avatars;
     state.avatarsAt = Date.now();
+    if (changed) drawFeed(); // the chat stays put between pages, so update its pictures
   } catch { /* initials it is */ }
 }
 
@@ -208,25 +215,95 @@ function linkify(text) {
   return parts;
 }
 
+// ---------- page data cache ----------
+
+// Pages draw straight away from the data they had last time, then check for
+// newer data behind the scenes and redraw if it changed. Waiting on the
+// server before drawing anything is what made moving between pages feel slow.
+const pageCache = new Map(); // GET path -> { data, json }
+let routeSeq = 0; // bumps on every page change, so late answers know they're stale
+
+// pageData gets a page's data: the remembered copy if there is one (checking
+// for a newer one in the background), otherwise from the server.
+async function pageData(path) {
+  const seq = routeSeq;
+  const cached = pageCache.get(path);
+  const fetchFresh = () => api('GET', path).then(data => {
+    const json = JSON.stringify(data);
+    const changed = !cached || cached.json !== json;
+    pageCache.set(path, { data, json });
+    return { data, changed };
+  });
+  if (!cached) return (await fetchFresh()).data;
+  // The redraw after a refresh has the newest data already: no need to ask again.
+  if (!redrawing) {
+    fetchFresh().then(r => { if (r.changed) refreshPage(seq); }).catch(() => { /* keep what's shown */ });
+  }
+  return cached.data;
+}
+let redrawing = false;
+
+// Anything that changes data could make remembered pages wrong, so forget
+// them; each page fetches fresh on its next visit.
+function forgetPages() { pageCache.clear(); }
+
+// refreshPage redraws the current page with newer data, unless the person has
+// moved on, has a dialog open, or is typing on the page (their next visit
+// shows the update instead).
+function refreshPage(seq) {
+  if (seq !== routeSeq || state.modal || !state.currentPage) return;
+  const el = document.activeElement;
+  if (el && el.closest('main') && /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName)) return;
+  if (document.querySelector('main .chip-add, main .music-form')) return; // mid-way through adding something
+  const main = document.querySelector('main');
+  const top = main ? main.scrollTop : 0;
+  redrawing = true; // pages ask for their data straight away, before their first await
+  let drawn;
+  try { drawn = state.currentPage(); } finally { redrawing = false; }
+  Promise.resolve(drawn).then(() => {
+    const m = document.querySelector('main');
+    if (m) m.scrollTop = top;
+  }).catch(() => { /* keep what's shown */ });
+}
+
+// Boards are kept per board too (with the tag the server gave them), so going
+// back to one draws it at once and then just asks "changed?".
+const boardCache = new Map(); // board id -> { board, columns, games, etag }
+
+function stashBoard() {
+  if (state.board) boardCache.set(state.board.id, { board: state.board, columns: state.columns, games: state.games, etag: state.boardEtag });
+}
+
 // ---------- routing ----------
 
 async function route() {
+  routeSeq++;
   stopPolling();
   closeModal();
+  stashBoard();
   if (!state.user) {
     try { state.user = await api('GET', '/me'); } catch { state.user = null; }
   }
   if (!state.user) return renderAuth();
   useUserTheme();
-  // Keep everyone's picture list fresh enough that new pictures show up.
-  if (Date.now() - state.avatarsAt > 60000) await loadAvatars();
+  // Keep everyone's picture list fresh enough that new pictures show up,
+  // without holding up the page (except the very first time).
+  if (!state.avatarsAt) await loadAvatars();
+  else if (Date.now() - state.avatarsAt > 60000) loadAvatars();
   const m = location.hash.match(/^#\/board\/(\d+)/);
+  const music = location.hash.match(/^#\/music(?:\/(playlists)|\/playlist\/(\d+))?$/);
   state.adminSecret = null;
+  state.onPlaylistChange = null;
+  let page;
+  if (m) page = () => renderBoard(Number(m[1]));
+  else if (location.hash === '#/admin') page = renderAdmin;
+  else if (music && music[2]) page = () => renderPlaylistPage(Number(music[2]));
+  else if (music && music[1]) page = renderPlaylistsPage;
+  else if (music) page = renderMusicPage;
+  else page = renderBoards;
+  state.currentPage = page;
   try {
-    if (m) await renderBoard(Number(m[1]));
-    else if (location.hash === '#/admin') await renderAdmin();
-    else if (location.hash === '#/music') await renderMusicPage();
-    else await renderBoards();
+    await page();
   } catch (e) {
     if (!state.user) return renderAuth();
     shell(h('div', { class: 'empty' }, win('Error', { cls: 'alert' },
@@ -318,6 +395,8 @@ async function logout() {
   state.channels = {};
   state.avatarsAt = 0;
   state.ticker = null;
+  state.board = null;
+  boardCache.clear(); // the next person to log in here sees their own permissions
   location.hash = '#/';
   route();
 }
@@ -609,8 +688,14 @@ const luminance = hex => {
 };
 
 // applyTheme sets the page's colours, filling any gaps from the default and
-// working out the few colours that are derived from the others.
+// working out the few colours that are derived from the others. Changing
+// them restyles the whole page, so it does nothing if they're already set,
+// and returns whether it changed anything.
+let appliedTheme = null;
 function applyTheme(vars) {
+  const key = JSON.stringify(vars);
+  if (key === appliedTheme) return false;
+  appliedTheme = key;
   const t = { ...THEME_PRESETS.penguin.vars, ...vars };
   const root = document.documentElement;
   for (const [key, cssVar] of ALL_THEME_FIELDS) root.style.setProperty(cssVar, t[key]);
@@ -621,6 +706,7 @@ function applyTheme(vars) {
   const dark = luminance(t.paper) < 0.3;
   root.style.setProperty('--danger-ink', dark ? '#ffb8bd' : '#7d0f1c');
   root.style.colorScheme = dark ? 'dark' : 'light';
+  return true;
 }
 
 // userThemeVars is the colours of the theme the user has picked.
@@ -634,8 +720,7 @@ function userThemeVars(u) {
 // the next visit starts in the right colours before the server has answered.
 function useUserTheme() {
   const vars = userThemeVars(state.user);
-  applyTheme(vars);
-  store('themeVars', JSON.stringify(vars));
+  if (applyTheme(vars)) store('themeVars', JSON.stringify(vars));
 }
 
 try {
@@ -815,6 +900,8 @@ async function setAdminMode(on) {
   try {
     state.user = await api('PUT', '/me/admin-mode', { on });
     toast(on ? 'Admin edit mode on: you can change any board' : 'Admin edit mode off', 'ok');
+    state.board = null;
+    boardCache.clear(); // remembered boards have the old permissions
     route();
   } catch (e) { toast(e.message); }
 }
@@ -849,7 +936,26 @@ function menubar(adminLink, modeSwitch) {
   return bar;
 }
 
+// shellKey describes what the frame around the page (menu bar, chat,
+// footer) shows. While it stays the same, moving between pages swaps only the
+// page itself, so the chat, its pictures and the ticker don't start over.
+function shellKey() {
+  const b = feedBoard();
+  const me = state.avatars[state.user.id];
+  return [state.user.id, state.user.username, state.user.adminMode, me ? me.v : '', channelKey(), b ? `${b.id}:${b.canEdit}` : ''].join('|');
+}
+
 function shell(...content) {
+  const main = h('main', { class: 'main' }, ...content);
+  const key = shellKey();
+  const old = $app.querySelector(':scope > .layout > main');
+  if (old && $app.dataset.shell === key) {
+    old.replaceWith(main);
+    refreshAdminBadge();
+    if (!chan().loadedAt || Date.now() - chan().loadedAt > 5000) loadFeed();
+    return;
+  }
+  $app.dataset.shell = key;
   let adminLink = null;
   let modeSwitch = null;
   if (state.user.isAdmin) {
@@ -861,19 +967,14 @@ function shell(...content) {
     }, h('span', { class: 'mode-light', 'aria-hidden': 'true' }), on ? 'Admin edit mode' : 'Admin view mode');
   }
   if (state.user.isAdmin) {
-    const badge = h('span', { class: 'nav-badge', hidden: true });
-    adminLink = h('a', { href: '#/admin', class: 'menu-item' }, 'Admin', badge);
-    api('GET', '/admin/pending').then(p => {
-      badge.textContent = String(p.length);
-      badge.hidden = p.length === 0;
-    }).catch(() => {});
+    adminLink = h('a', { href: '#/admin', class: 'menu-item' }, 'Admin', h('span', { class: 'nav-badge', hidden: true }));
   }
   // replaceChildren would print a null as "null", hence the filter at the end.
   $app.replaceChildren(...[
     menubar(adminLink, modeSwitch),
     h('div', { class: `layout feed-${state.feedSide}${state.feedHidden ? ' feed-hidden' : ''}` },
       feedPanel(),
-      h('main', { class: 'main' }, ...content)),
+      main),
     state.feedHidden ? h('button', { class: `btn feed-reopen feed-reopen-${state.feedSide}`, onclick: () => setFeedHidden(false) }, '✎ Chat') : null,
     h('footer', { class: 'footer' },
       h('div', { class: 'badges88' },
@@ -884,10 +985,22 @@ function shell(...content) {
       h('div', { class: 'marquee', id: 'ticker' }, h('span', {})),
       h('button', { class: 'ticker-add', onclick: openTickerModal }, '✎ add to the ticker')),
   ].filter(Boolean));
+  refreshAdminBadge();
   drawTicker();
   if (!state.ticker || Date.now() - state.tickerAt > 120000) loadTicker();
   drawFeed();
   if (!chan().loadedAt || Date.now() - chan().loadedAt > 5000) loadFeed();
+}
+
+// refreshAdminBadge shows admins how many sign-ups are waiting.
+function refreshAdminBadge() {
+  if (!state.user.isAdmin) return;
+  api('GET', '/admin/pending').then(p => {
+    const badge = document.querySelector('.menubar .nav-badge');
+    if (!badge) return;
+    badge.textContent = String(p.length);
+    badge.hidden = p.length === 0;
+  }).catch(() => {});
 }
 
 // ---------- chat feed ----------
@@ -941,7 +1054,7 @@ function chan() {
     state.channels[key] = {
       key, boardId: key === 'site' ? null : feedBoard().id,
       posts: [], more: false, loadedAt: 0, etag: null, draft: '',
-      game: null, picking: false, music: null, musicPicking: false,
+      game: null, picking: false, music: null, playlist: null, musicPicking: false,
     };
   }
   return state.channels[key];
@@ -954,6 +1067,7 @@ function setFeedTab(tab) {
   store('feedTab', tab);
   const old = document.getElementById('feed');
   if (old) old.replaceWith(feedPanel());
+  if (state.user) $app.dataset.shell = shellKey();
   drawFeed();
   loadFeed();
 }
@@ -978,7 +1092,7 @@ function feedPanel() {
   const musicArea = h('div', { class: 'feed-link' });
   const musicBtn = h('button', {
     class: 'link xs', type: 'button',
-    onclick: () => { f.musicPicking = !f.musicPicking && !f.music; drawMusicArea(musicArea, musicBtn); },
+    onclick: () => { f.musicPicking = !f.musicPicking && !f.music && !f.playlist; drawMusicArea(musicArea, musicBtn); },
   });
   const postBtn = h('button', { class: 'btn primary sm', type: 'submit' }, 'Post');
   const form = h('form', {
@@ -987,7 +1101,7 @@ function feedPanel() {
       e.preventDefault();
       const body = f.draft.trim();
       // A shared game or song can go out without a caption.
-      if (!body && !f.game && !f.music) return;
+      if (!body && !f.game && !f.music && !f.playlist) return;
       postBtn.disabled = true;
       try {
         const g = f.game;
@@ -997,12 +1111,14 @@ function feedPanel() {
           steamAppId: g && g.external ? g.steamAppId : undefined,
           igdbId: g && g.external ? g.igdbId : undefined,
           musicId: f.music ? f.music.id : undefined,
+          playlistId: f.playlist ? f.playlist.id : undefined,
         });
         f.posts.unshift(p);
         f.draft = '';
         f.game = null;
         f.picking = false;
         f.music = null;
+        f.playlist = null;
         f.musicPicking = false;
         ta.value = '';
         updateCounter();
@@ -1230,8 +1346,10 @@ function postItem(p, c) {
       canRemove ? h('button', { class: 'link xs danger', onclick: del }, mine ? 'Delete' : 'Remove') : null),
     p.body ? h('div', { class: 'post-body' }, linkify(p.body)) : null,
     p.music ? musicChip(p.music) : null,
+    p.playlist ? playlistChip(p.playlist) : null,
     p.game ? gameChip(p.game) : null,
-    p.link ? gameChip({ ...p.link, external: true }) : null);
+    p.link ? gameChip({ ...p.link, external: true }) : null,
+    p.hadAttachment ? h('p', { class: 'muted xs post-gone' }, 'Shared something that has since been deleted.') : null);
 }
 
 function drawFeed() {
@@ -1320,11 +1438,13 @@ function alsoLinks(m) {
 // resolveMusic asks the server to check a pasted link and look it up.
 const resolveMusic = link => api('POST', '/music/resolve', { url: link });
 
-// musicChip shows a song or playlist with play / queue buttons, a link to it,
-// and where else it's available. onRemove adds a remove button.
-function musicChip(m, onRemove) {
+// musicChip shows a song or Spotify/YouTube playlist with play / queue /
+// add-to-playlist buttons, a link to it, and where else it's available.
+// onRemove adds a remove button; opts.onPlay replaces what ▶ does and
+// opts.extra adds more buttons (a playlist page's ↑ ↓).
+function musicChip(m, onRemove, opts = {}) {
   const thumb = safeUrl(m.thumb);
-  return h('div', { class: 'music-chip' },
+  const chip = h('div', { class: 'music-chip' },
     thumb ? h('img', { src: thumb, alt: '', loading: 'lazy' }) : h('span', { class: 'chip-ph' }, '♪'),
     h('span', { class: 'chip-text' },
       h('span', { class: 'chip-title', title: m.title }, m.title),
@@ -1333,14 +1453,142 @@ function musicChip(m, onRemove) {
         h('a', { href: safeUrl(m.url), target: '_blank', rel: 'noopener noreferrer' }, `Open in ${providerName(m)} ↗`),
         ' · Find on ', alsoLinks(m))),
     h('span', { class: 'music-actions' },
-      h('button', { class: 'btn sm primary', type: 'button', title: 'Play now', 'aria-label': `Play ${m.title}`, onclick: () => playNow(m) }, '▶'),
+      opts.extra,
+      h('button', { class: 'btn sm primary', type: 'button', title: 'Play now', 'aria-label': `Play ${m.title}`, onclick: opts.onPlay || (() => playNow(m)) }, '▶'),
       h('button', { class: 'btn sm', type: 'button', title: 'Add to queue', 'aria-label': `Queue ${m.title}`, onclick: () => queueAdd(m) }, '+'),
+      h('button', { class: 'btn sm', type: 'button', title: 'Add to a playlist', 'aria-label': `Add ${m.title} to a playlist`, onclick: e => toggleAddToPlaylist(chip, m, e.currentTarget) }, '♫+'),
+      onRemove ? h('button', { class: 'link xs danger', type: 'button', title: 'Remove', 'aria-label': 'Remove', onclick: onRemove }, '×') : null));
+  return chip;
+}
+
+// ---- our own playlists ----
+
+// loadPlaylists fetches everyone's playlists (summaries, no songs).
+async function loadPlaylists() {
+  state.playlists = await api('GET', '/playlists');
+  return state.playlists;
+}
+
+const myPlaylists = list => list.filter(p => p.userId === state.user.id);
+const songCount = n => `${n} song${n === 1 ? '' : 's'}`;
+
+async function playlistSongs(pl) {
+  const full = await api('GET', `/playlists/${pl.id}`);
+  if (!full.items.length) throw new Error(`"${full.name}" has no songs yet`);
+  return full.items;
+}
+
+async function playPlaylist(pl) {
+  try { playAll(await playlistSongs(pl)); } catch (e) { toast(e.message); }
+}
+
+async function queuePlaylist(pl) {
+  try {
+    const items = await playlistSongs(pl);
+    const wasEmpty = !player.queue.length;
+    player.queue.push(...items);
+    if (wasEmpty) {
+      playIndex(0);
+      return;
+    }
+    saveMusic();
+    drawMusic();
+    toast(`Queued ${songCount(items.length)} from ${pl.name}`, 'ok');
+  } catch (e) { toast(e.message); }
+}
+
+// playlistChip shows one of our playlists: its name, owner and size, a link
+// to its page, and play / queue buttons. onRemove adds a remove button.
+function playlistChip(pl, onRemove) {
+  const thumb = safeUrl(pl.thumb);
+  const href = `#/music/playlist/${pl.id}`;
+  return h('div', { class: 'music-chip playlist-chip' },
+    h('a', { class: 'playlist-art', href, 'aria-hidden': 'true', tabindex: '-1' },
+      thumb ? h('img', { src: thumb, alt: '', loading: 'lazy' }) : h('span', { class: 'chip-ph' }, '♫')),
+    h('span', { class: 'chip-text' },
+      h('a', { class: 'chip-title', href, title: pl.name }, pl.name),
+      h('span', { class: 'muted xs' }, `Playlist · ${songCount(pl.count)} · by ${pl.username}`)),
+    h('span', { class: 'music-actions' },
+      h('button', { class: 'btn sm primary', type: 'button', title: 'Play the playlist', 'aria-label': `Play ${pl.name}`, disabled: !pl.count, onclick: () => playPlaylist(pl) }, '▶'),
+      h('button', { class: 'btn sm', type: 'button', title: 'Add it all to the queue', 'aria-label': `Queue ${pl.name}`, disabled: !pl.count, onclick: () => queuePlaylist(pl) }, '+'),
       onRemove ? h('button', { class: 'link xs danger', type: 'button', title: 'Remove', 'aria-label': 'Remove', onclick: onRemove }, '×') : null));
 }
 
+// toggleAddToPlaylist opens (or closes) a row under a song for adding it to
+// one of your playlists, or to a new one.
+async function toggleAddToPlaylist(chip, m, toggle) {
+  const open = chip.querySelector('.chip-add');
+  if (open) {
+    clearOutsideClose(open);
+    open.remove();
+    return;
+  }
+  let mine;
+  try { mine = myPlaylists(await loadPlaylists()); } catch (e) { return toast(e.message); }
+  const NEW = 'new';
+  const pick = h('select', { 'aria-label': 'Playlist' },
+    mine.map(p => h('option', { value: p.id }, `${p.name} (${p.count})`)),
+    h('option', { value: NEW }, '+ New playlist…'));
+  const name = h('input', { placeholder: 'New playlist name', maxlength: 60, 'aria-label': 'New playlist name' });
+  const add = h('button', { class: 'btn sm primary', type: 'button' }, 'Add');
+  const showName = () => { name.hidden = pick.value !== NEW; if (!name.hidden) name.focus(); };
+  const close = () => { clearOutsideClose(row); row.remove(); };
+  const submit = async () => {
+    add.disabled = true;
+    try {
+      let pl;
+      if (pick.value === NEW) {
+        if (!name.value.trim()) { name.focus(); return; }
+        pl = await api('POST', '/playlists', { name: name.value, musicId: m.id });
+        toast(`Made "${pl.name}" with ${m.title}`, 'ok');
+      } else {
+        pl = await api('POST', `/playlists/${pick.value}/items`, { musicId: m.id });
+        toast(`Added to ${pl.name}`, 'ok');
+      }
+      close();
+      if (state.onPlaylistChange) state.onPlaylistChange(pl);
+    } catch (e) { toast(e.message); } finally { add.disabled = false; }
+  };
+  pick.addEventListener('change', showName);
+  add.addEventListener('click', submit);
+  name.addEventListener('keydown', e => {
+    if (e.key === 'Enter') { e.preventDefault(); submit(); }
+  });
+  const row = h('div', { class: 'chip-add row', onkeydown: e => { if (e.key === 'Escape') { e.stopPropagation(); close(); } } },
+    h('span', { class: 'xs' }, 'Add to'), pick, name, add);
+  chip.append(row);
+  closeOnOutside(row, toggle, close);
+  showName();
+  if (mine.length) pick.focus();
+}
+
 // musicLinkBox is a "paste a link" box; onMusic gets the looked-up music.
+// With onPlaylist, it also offers our own playlists to pick from.
 // It isn't a <form>, because it also sits inside the chat's form.
-function musicLinkBox(onMusic, onCancel) {
+function musicLinkBox(onMusic, onCancel, onPlaylist) {
+  const box = pasteMusicRow(onMusic, onCancel);
+  if (!onPlaylist) return box;
+  const pick = h('select', { 'aria-label': 'Link a playlist', disabled: true }, h('option', { value: '' }, 'Loading playlists…'));
+  loadPlaylists().then(list => {
+    const mine = myPlaylists(list);
+    const others = list.filter(p => p.userId !== state.user.id);
+    const opt = p => h('option', { value: p.id }, `${p.name} (${songCount(p.count)}${p.userId === state.user.id ? '' : `, by ${p.username}`})`);
+    pick.replaceChildren(
+      h('option', { value: '' }, list.length ? '…or pick a playlist' : 'No playlists yet (make one on the Music page)'),
+      mine.length ? h('optgroup', { label: 'Your playlists' }, mine.map(opt)) : null,
+      others.length ? h('optgroup', { label: "Everyone else's" }, others.map(opt)) : null);
+    pick.disabled = !list.length;
+  }).catch(e => toast(e.message));
+  pick.addEventListener('change', async () => {
+    const pl = (state.playlists || []).find(p => String(p.id) === pick.value);
+    if (!pl) return;
+    pick.disabled = true;
+    try { await onPlaylist(pl); } catch (e) { toast(e.message); pick.disabled = false; }
+  });
+  return h('div', { class: 'stack tight' }, box, pick);
+}
+
+function pasteMusicRow(onMusic, onCancel) {
   const add = h('button', { class: 'btn sm primary', type: 'button' }, 'Add');
   const input = h('input', {
     placeholder: 'Paste a Spotify or YouTube Music link…', 'aria-label': 'Music link',
@@ -1378,9 +1626,13 @@ function drawMusicArea(area, toggle) {
   clearOutsideClose(area);
   const redraw = () => drawMusicArea(area, toggle);
   toggle.textContent = f.musicPicking ? 'Cancel' : '+ Link music';
-  toggle.hidden = !!f.music;
+  toggle.hidden = !!(f.music || f.playlist);
   if (f.music) {
     area.replaceChildren(musicChip(f.music, () => { f.music = null; redraw(); }));
+    return;
+  }
+  if (f.playlist) {
+    area.replaceChildren(playlistChip(f.playlist, () => { f.playlist = null; redraw(); }));
     return;
   }
   if (!f.musicPicking) {
@@ -1389,7 +1641,10 @@ function drawMusicArea(area, toggle) {
   }
   const close = () => { f.musicPicking = false; redraw(); };
   closeOnOutside(area, toggle, close);
-  area.replaceChildren(musicLinkBox(m => { f.music = m; f.musicPicking = false; redraw(); }, close));
+  area.replaceChildren(musicLinkBox(
+    m => { f.music = m; f.musicPicking = false; redraw(); },
+    close,
+    pl => { f.playlist = pl; f.musicPicking = false; redraw(); }));
 }
 
 // ---- the floating player ----
@@ -1739,7 +1994,7 @@ drawMusic();
 // ---- the Music page ----
 
 async function renderMusicPage() {
-  const shares = await api('GET', '/music/shares');
+  const shares = await pageData('/music/shares');
   const people = [...new Set(shares.map(s => s.username).filter(Boolean))].sort();
   const who = h('select', { 'aria-label': 'Shared by' }, h('option', { value: '' }, 'Everyone'), people.map(p => h('option', { value: p }, p)));
   const text = h('input', { type: 'search', placeholder: 'Filter by song, artist or game…', 'aria-label': 'Filter music' });
@@ -1766,9 +2021,7 @@ async function renderMusicPage() {
   text.addEventListener('input', draw);
 
   shell(
-    h('div', { class: 'page-head' },
-      h('h1', {}, 'Music'),
-      h('p', { class: 'muted' }, 'Everything shared in the chats and on games, newest first.')),
+    musicHead('shared'),
     win('Shared Music', { cls: 'music-page' },
       h('div', { class: 'row' }, who, text,
         h('button', {
@@ -1781,6 +2034,119 @@ async function renderMusicPage() {
         }, '▶ Play all shown')),
       list));
   draw();
+}
+
+// musicHead is the Music pages' heading, with tabs for shared music and playlists.
+function musicHead(tab) {
+  const tabLink = (key, href, label) => h('a', { class: 'music-tab' + (tab === key ? ' on' : ''), href, 'aria-current': tab === key ? 'page' : null }, label);
+  return h('div', { class: 'page-head' },
+    h('h1', {}, 'Music'),
+    h('nav', { class: 'music-tabs', 'aria-label': 'Music' },
+      tabLink('shared', '#/music', 'Shared'),
+      tabLink('playlists', '#/music/playlists', 'Playlists')),
+    h('p', { class: 'muted' }, tab === 'shared'
+      ? 'Everything shared in the chats and on games, newest first.'
+      : 'Mix songs from Spotify and YouTube into playlists, then share them in chat or put them on games.'));
+}
+
+async function renderPlaylistsPage() {
+  const list = state.playlists = await pageData('/playlists');
+  const mine = myPlaylists(list);
+  const others = list.filter(p => p.userId !== state.user.id);
+
+  const name = h('input', { placeholder: 'Playlist name, e.g. "Valheim boss fights"', maxlength: 60, required: true, 'aria-label': 'Playlist name' });
+  const create = h('form', {
+    class: 'row',
+    onsubmit: async e => {
+      e.preventDefault();
+      try {
+        const pl = await api('POST', '/playlists', { name: name.value });
+        location.hash = `#/music/playlist/${pl.id}`;
+      } catch (ex) { toast(ex.message); }
+    },
+  }, name, h('button', { class: 'btn primary', type: 'submit' }, 'Create'));
+
+  const section = (title, items, empty) => [
+    h('h3', { class: 'music-section' }, title),
+    items.length ? h('div', { class: 'stack music-list' }, items.map(pl => playlistChip(pl))) : h('p', { class: 'muted xs' }, empty),
+  ];
+  shell(
+    musicHead('playlists'),
+    win('Playlists', { cls: 'music-page' },
+      h('div', { class: 'field' }, h('span', {}, 'New playlist'), create),
+      section('Your playlists', mine, 'None yet. Make one above, or use ♫+ on any song.'),
+      section("Everyone else's", others, 'Nobody else has made one yet.')));
+}
+
+async function renderPlaylistPage(id) {
+  const first = await pageData(`/playlists/${id}`);
+  const root = h('div', { class: 'playlist-page' });
+  shell(musicHead('playlists'), root);
+  const draw = pl => {
+    const mine = pl.userId === state.user.id;
+    const canDelete = mine || (state.user.isAdmin && state.user.adminMode);
+    const act = async fn => {
+      try { draw(await fn()); } catch (e) { toast(e.message); }
+    };
+    const move = (i, by) => {
+      const ids = pl.items.map(m => m.id);
+      [ids[i], ids[i + by]] = [ids[i + by], ids[i]];
+      act(() => api('PUT', `/playlists/${pl.id}/items`, { musicIds: ids }));
+    };
+    const rename = () => {
+      const input = h('input', { value: pl.name, maxlength: 60, 'aria-label': 'Playlist name' });
+      const save = () => act(() => api('PATCH', `/playlists/${pl.id}`, { name: input.value }));
+      input.addEventListener('keydown', e => {
+        if (e.key === 'Enter') save();
+        else if (e.key === 'Escape') draw(pl);
+      });
+      title.replaceWith(h('div', { class: 'row' }, input,
+        h('button', { class: 'btn sm primary', type: 'button', onclick: save }, 'Save'),
+        h('button', { class: 'btn sm ghost', type: 'button', onclick: () => draw(pl) }, 'Cancel')));
+      input.focus();
+      input.select();
+    };
+    const del = async () => {
+      if (!confirm(`Delete "${pl.name}"? Chat posts and games that link it will lose it.`)) return;
+      try {
+        await api('DELETE', `/playlists/${pl.id}`);
+        toast(`Deleted ${pl.name}`, 'ok');
+        location.hash = '#/music/playlists';
+      } catch (e) { toast(e.message); }
+    };
+
+    const title = h('h2', { class: 'playlist-name' }, pl.name);
+    const n = pl.items.length;
+    root.replaceChildren(win('Playlist', { cls: 'music-page' },
+      h('p', { class: 'xs' }, h('a', { href: '#/music/playlists' }, '◀ All playlists')),
+      title,
+      h('p', { class: 'muted xs' }, `by ${pl.username} · ${songCount(n)} · updated ${ago(pl.updatedAt)}`),
+      h('div', { class: 'row' },
+        h('button', { class: 'btn primary', type: 'button', disabled: !n, onclick: () => playAll(pl.items) }, '▶ Play'),
+        h('button', { class: 'btn', type: 'button', disabled: !n, onclick: () => queuePlaylist(pl) }, '+ Queue all'),
+        h('span', { class: 'spacer' }),
+        mine ? h('button', { class: 'btn sm', type: 'button', onclick: rename }, 'Rename') : null,
+        canDelete ? h('button', { class: 'btn sm danger', type: 'button', onclick: del }, 'Delete') : null),
+      mine ? h('div', { class: 'field' }, h('span', {}, 'Add a song'),
+        musicLinkBox(m => act(() => api('POST', `/playlists/${pl.id}/items`, { musicId: m.id })))) : null,
+      n
+        ? h('ol', { class: 'playlist-items' }, pl.items.map((m, i) => h('li', {},
+          musicChip(m, mine ? () => act(() => api('DELETE', `/playlists/${pl.id}/items/${m.id}`)) : null, {
+            // ▶ on a song plays the playlist from there.
+            onPlay: () => playAll(pl.items.slice(i)),
+            extra: mine ? [
+              h('button', { class: 'btn sm', type: 'button', title: 'Move up', 'aria-label': `Move ${m.title} up`, disabled: i === 0, onclick: () => move(i, -1) }, '↑'),
+              h('button', { class: 'btn sm', type: 'button', title: 'Move down', 'aria-label': `Move ${m.title} down`, disabled: i === n - 1, onclick: () => move(i, 1) }, '↓'),
+            ] : null,
+          }))))
+        : h('p', { class: 'muted' }, mine
+          ? 'No songs yet. Paste a link above, or use ♫+ on any song in the chat or on the Shared tab.'
+          : 'No songs yet.')));
+  };
+  const load = async () => draw(await api('GET', `/playlists/${id}`));
+  // Adding a song here with ♫+ (e.g. to this very playlist) shows straight away.
+  state.onPlaylistChange = changed => { if (changed.id === id) load().catch(e => toast(e.message)); };
+  draw(first);
 }
 
 // ---------- ticker ----------
@@ -1876,7 +2242,7 @@ function closeModal() {
 // ---------- boards list ----------
 
 async function renderBoards() {
-  const boards = await api('GET', '/boards');
+  const boards = await pageData('/boards');
   state.boards = boards;
   state.board = null;
   state.games = [];
@@ -2131,13 +2497,38 @@ function tickerAdmin(t, act) {
 // ---------- board view ----------
 
 async function renderBoard(id) {
-  await loadBoard(id);
+  const cached = boardCache.get(id);
+  if (cached && !(state.board && state.board.id === id)) {
+    state.board = cached.board;
+    state.columns = cached.columns;
+    state.games = cached.games;
+    state.boardEtag = cached.etag;
+  }
+  const have = state.board && state.board.id === id;
+  if (!have) await loadBoard(id);
   drawBoard();
   startPolling(id);
   if (state.pendingGame) {
     const gameId = state.pendingGame;
     state.pendingGame = null;
     openGame(gameId);
+  }
+  if (!have) return;
+  // Drawn from what we had: now check with the server ("changed?" costs
+  // almost nothing when it hasn't).
+  const seq = routeSeq;
+  const before = JSON.stringify(state.board);
+  try {
+    if (!(await loadBoard(id)) || seq !== routeSeq) return;
+    if (!state.dragging) drawColumns();
+    // Name, editors and permissions are in the header: redraw that too.
+    if (JSON.stringify(state.board) !== before) refreshPage(seq);
+  } catch {
+    // Gone, or no longer visible to us: show that properly.
+    if (seq !== routeSeq) return;
+    boardCache.delete(id);
+    state.board = null;
+    route();
   }
 }
 
@@ -2884,15 +3275,26 @@ function drawGame(root, data) {
         h('label', { class: 'field' }, h('span', {}, 'Column'), columnSel),
         h('div', { class: 'field' }, h('span', {}, 'Your take'), levelBtns, ownsBox),
         h('div', { class: 'field' }, h('span', {}, `The group${owners ? ` · ${owners} own it` : ''}`), group),
-        gameMusicSection(g, music, editable, act),
+        gameMusicSection(g, music, data.playlists || [], editable, act),
         editable ? manage : null)),
   ].filter(Boolean));
 }
 
 // gameMusicSection is a game's soundtrack in its details window. Anyone can
 // play it; the board's editors can add and remove songs and playlists.
-function gameMusicSection(g, music, editable, act) {
+function gameMusicSection(g, music, playlists, editable, act) {
   let adding = null;
+  const total = music.length + playlists.length;
+  // Play all: the game's own songs, then each playlist's, each song once.
+  const playEverything = async () => {
+    try {
+      const lists = await Promise.all(playlists.map(pl => api('GET', `/playlists/${pl.id}`)));
+      const seen = new Set();
+      const all = music.concat(...lists.map(l => l.items)).filter(m => !seen.has(m.id) && seen.add(m.id));
+      if (!all.length) return toast('Nothing to play yet');
+      playAll(all);
+    } catch (e) { toast(e.message); }
+  };
   const addBtn = editable ? h('button', {
     class: 'link xs', type: 'button',
     onclick: () => {
@@ -2902,20 +3304,27 @@ function gameMusicSection(g, music, editable, act) {
         addBtn.textContent = '+ Add music';
         return;
       }
-      adding = musicLinkBox(m => act(() => api('POST', `/games/${g.id}/music`, { musicId: m.id })));
+      adding = musicLinkBox(
+        m => act(() => api('POST', `/games/${g.id}/music`, { musicId: m.id })),
+        null,
+        pl => act(() => api('POST', `/games/${g.id}/playlists`, { playlistId: pl.id })));
       addBtn.textContent = 'Cancel';
       addBtn.after(adding);
     },
   }, '+ Add music') : null;
   return h('div', { class: 'field' },
     h('div', { class: 'row between' },
-      h('span', {}, `Music${music.length ? ` (${music.length})` : ''}`),
-      music.length ? h('button', { class: 'btn sm', type: 'button', onclick: () => playAll(music) }, '▶ Play all') : null),
-    music.length
-      ? h('div', { class: 'stack music-list' }, music.map(m => musicChip(m, editable
-        ? () => act(() => api('DELETE', `/games/${g.id}/music/${m.id}`))
-        : null)))
-      : h('p', { class: 'muted xs' }, editable ? 'Give this game a soundtrack: paste a Spotify or YouTube Music link.' : 'No music yet.'),
+      h('span', {}, `Music${total ? ` (${total})` : ''}`),
+      total ? h('button', { class: 'btn sm', type: 'button', onclick: playEverything }, '▶ Play all') : null),
+    total
+      ? h('div', { class: 'stack music-list' },
+        playlists.map(pl => playlistChip(pl, editable
+          ? () => act(() => api('DELETE', `/games/${g.id}/playlists/${pl.id}`))
+          : null)),
+        music.map(m => musicChip(m, editable
+          ? () => act(() => api('DELETE', `/games/${g.id}/music/${m.id}`))
+          : null)))
+      : h('p', { class: 'muted xs' }, editable ? 'Give this game a soundtrack: paste a Spotify or YouTube Music link, or pick a playlist.' : 'No music yet.'),
     addBtn);
 }
 
