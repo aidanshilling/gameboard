@@ -1012,6 +1012,18 @@ button.game-chip:hover, .feed-result:hover { background: var(--peach); }
 /* Top games, at the top of the boards page */
 .highlights { margin-bottom: 22px; }
 .highlights > .win-body { padding: 0; }
+.highlights.collapsed > .win-body { display: none; }
+/* The fold box: blank until pointed at, then orange with − (or + when folded). */
+.win-bar button.win-collapse:hover,
+.win-bar button.win-collapse:focus-visible { background: var(--orange); outline: none; }
+.win-bar button.win-collapse:active { background: var(--beak); }
+button.win-collapse::before,
+button.win-collapse::after { opacity: 0; transform: translate(-50%, -50%); }
+button.win-collapse::after { transform: translate(-50%, -50%) rotate(90deg); }
+button.win-collapse:hover::before,
+button.win-collapse:focus-visible::before,
+.collapsed button.win-collapse:hover::after,
+.collapsed button.win-collapse:focus-visible::after { opacity: 1; }
 .hl-count {
   margin-left: 6px;
   padding: 0 5px;

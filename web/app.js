@@ -2374,7 +2374,23 @@ function highlightsPanel(data) {
     strip.scrollLeft += e.deltaY * (e.deltaMode === 1 ? 40 : 1);
   }, { passive: false });
   draw();
-  return win('Top Games', { cls: 'highlights' }, tabs, strip);
+  const panel = win('Top Games', { cls: 'highlights' }, tabs, strip);
+  // The box in the title bar folds the panel away (remembered in this browser).
+  const box = h('button', { class: 'win-close win-collapse', type: 'button' });
+  const setCollapsed = collapsed => {
+    panel.classList.toggle('collapsed', collapsed);
+    box.setAttribute('aria-expanded', String(!collapsed));
+    box.title = collapsed ? 'Show Top Games' : 'Hide Top Games';
+    box.setAttribute('aria-label', box.title);
+  };
+  box.addEventListener('click', () => {
+    const collapsed = !panel.classList.contains('collapsed');
+    store('highlightsCollapsed', collapsed ? '1' : '0');
+    setCollapsed(collapsed);
+  });
+  panel.querySelector('.win-close').replaceWith(box);
+  setCollapsed(load('highlightsCollapsed') === '1');
+  return panel;
 }
 
 // highlightTile is one game in the top games row. Clicking it opens the game
