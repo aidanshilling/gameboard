@@ -952,7 +952,7 @@ async function setAdminMode(on) {
 // menubar is the top bar. On phones its items fold into a ☰ Menu dropdown.
 function menubar(adminLink, modeSwitch) {
   const items = h('div', { class: 'menu-items' },
-    h('a', { href: '#/', class: 'menu-item' }, 'Boards'),
+    h('a', { href: '#/', class: 'menu-item' }, 'Games'),
     h('a', { href: '#/music', class: 'menu-item' }, 'Music'),
     adminLink,
     modeSwitch,
@@ -2313,7 +2313,7 @@ async function renderBoards() {
   const others = boards.filter(b => !isMyBoard(b));
   shell(
     h('div', { class: 'page-head' },
-      h('h1', {}, 'Boards'),
+      h('h1', {}, 'Games'),
       h('p', { class: 'muted' }, "Everyone can see every board. Only a board's owner and the editors they add can change it.")),
     highlights ? highlightsPanel(highlights) : null,
     h('h2', { class: 'section-title' }, 'My boards'),
