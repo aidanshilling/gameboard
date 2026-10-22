@@ -2381,7 +2381,7 @@ function highlightsPanel(data) {
 // on its board.
 function highlightTile(g, i, tab) {
   const img = safeUrl(g.image);
-  const open = () => { state.pendingGame = g.gameId; location.hash = `#/board/${g.boardId}`; };
+  const open = () => openGameEverywhere(g.gameId);
   const n = g.users.length;
   const p = g.price;
   const shown = g.users.slice(0, 6);
@@ -2393,7 +2393,7 @@ function highlightTile(g, i, tab) {
   else if (tab === 'owned') line = `${n} own${n === 1 ? 's' : ''} it`;
   else line = n ? `${n} want${n === 1 ? 's' : ''} to play` : null;
   return h('div', {
-    class: 'hl-tile', role: 'link', tabindex: '0', title: `Open ${g.title} on ${g.boardName}`,
+    class: 'hl-tile', role: 'button', tabindex: '0', title: `Open ${g.title}`,
     onclick: open, onkeydown: e => { if (e.key === 'Enter' && e.target === e.currentTarget) open(); },
   },
   h('div', { class: 'hl-img' },
@@ -3318,29 +3318,18 @@ function protonText(m) {
   return s;
 }
 
-function drawGame(root, data) {
-  const { game: g, notes } = data;
-  const music = data.music || [];
-  syncGame(g);
-  const m = g.meta || {};
+// gameLinkButtons are a game's store and database links.
+function gameLinkButtons(m) {
   const links = m.links || {};
-  const me = g.interests.find(i => i.userId === state.user.id) || { level: 0, owns: false };
-
-  const act = async fn => {
-    try {
-      const d = await fn();
-      if (d && d.game) drawGame(root, d);
-    } catch (e) { toast(e.message); }
-  };
-  const setInterest = (level, owns) => act(() => api('PUT', `/games/${g.id}/interest`, { level, owns }));
-
-  const img = safeUrl(m.headerUrl) || safeUrl(m.coverUrl);
-  const linkBtns = [
+  return [
     ['Steam', links.steam], ['SteamDB', links.steamdb], ['ProtonDB', links.protondb], ['IGDB', links.igdb], ['Website', m.website],
   ].filter(([, u]) => safeUrl(u))
     .map(([label, u]) => h('a', { class: 'btn sm', href: u, target: '_blank', rel: 'noopener noreferrer' }, label + ' ↗'));
+}
 
-  const facts = [
+// gameFacts are the [label, value] facts shown about a game, where known.
+function gameFacts(m) {
+  return [
     ['Release', m.releaseDate && (m.releaseDate + (m.comingSoon ? ' (upcoming)' : ''))],
     ['Developer', m.developers && m.developers.join(', ')],
     ['Publisher', m.publishers && m.publishers.join(', ')],
@@ -3352,6 +3341,107 @@ function drawGame(root, data) {
     ['Metacritic', m.metacritic],
     ['IGDB rating', m.igdbRating && `${m.igdbRating}/100`],
   ].filter(([, v]) => v);
+}
+
+// voteList lists people's votes on a game, with their pictures.
+function voteList(list) {
+  return h('ul', { class: 'group' }, list.map(i => {
+    const l = levelInfo(i.level);
+    return h('li', {},
+      avatar(i.userId, i.username, `${l ? l.cls : 'none'}${i.owns ? ' owns' : ''}`),
+      h('span', { class: 'grow' }, i.username),
+      h('span', { class: 'muted xs' }, [l && l.label, i.owns && 'owns it'].filter(Boolean).join(' · ')));
+  }));
+}
+
+// takeButtons are "Want to play / Maybe / Pass" and "I own it" for a vote;
+// set(level, owns) saves a change.
+function takeButtons(me, set) {
+  return [
+    h('div', { class: 'seg' }, LEVELS.map(l => h('button', {
+      class: `seg-btn ${l.cls}${me.level === l.level ? ' active' : ''}`,
+      onclick: () => set(me.level === l.level ? 0 : l.level, me.owns),
+    }, l.label))),
+    h('label', { class: 'check' },
+      h('input', { type: 'checkbox', checked: me.owns, onchange: e => set(me.level, e.target.checked) }), 'I own it'),
+  ];
+}
+
+// openGameEverywhere shows a game as a whole, not as one board's copy of it:
+// its details, everyone's take across all the boards it's on, and your own
+// vote, which counts on every one of those boards. Opened from Top Games.
+async function openGameEverywhere(id) {
+  let data;
+  try { data = await api('GET', `/games/${id}/everywhere`); } catch (e) { return toast(e.message); }
+  const root = h('div', { class: 'game-detail' });
+  let changed = false;
+  openModal('Game Info', root, true);
+  // Votes move Top Games around, so redraw the page underneath on the way out.
+  const seq = routeSeq;
+  state.onModalClose = () => { if (changed) refreshPage(seq); };
+
+  const draw = d => {
+    const m = d.meta || {};
+    const img = safeUrl(m.headerUrl) || safeUrl(m.coverUrl);
+    const linkBtns = gameLinkButtons(m);
+    const facts = gameFacts(m);
+    const set = async (level, owns) => {
+      try {
+        draw(await api('PUT', `/games/${id}/everywhere/interest`, { level, owns }));
+        changed = true;
+      } catch (e) { toast(e.message); }
+    };
+    const owners = d.votes.filter(i => i.owns).length;
+    const n = d.copies.length;
+    const openOn = c => () => {
+      closeModal();
+      state.pendingGame = c.gameId;
+      location.hash = `#/board/${c.boardId}`;
+    };
+    root.replaceChildren(...[
+      h('div', { class: 'hero' + (img ? '' : ' no-img') },
+        img ? h('img', { src: img, alt: '' }) : null,
+        h('div', { class: 'hero-text' },
+          h('h2', {}, d.title),
+          h('div', { class: 'muted xs' }, `On ${n} board${n === 1 ? '' : 's'}`))),
+      linkBtns.length ? h('div', { class: 'link-row' }, linkBtns) : null,
+      h('div', { class: 'detail-grid' },
+        h('div', { class: 'detail-main' },
+          m.summary ? h('p', { class: 'summary' }, m.summary) : h('p', { class: 'muted' }, 'No description.'),
+          facts.length ? h('dl', { class: 'facts' }, facts.map(([k, v]) => [h('dt', {}, k), h('dd', {}, String(v))])) : null),
+        h('aside', { class: 'detail-side' },
+          h('div', { class: 'field' }, h('span', {}, 'Your take'), takeButtons(d.me, set),
+            h('p', { class: 'muted xs' }, n > 1 ? `Counts on all ${n} boards it's on.` : "Counts on the board it's on.")),
+          h('div', { class: 'field' }, h('span', {}, `Everyone${owners ? ` · ${owners} own it` : ''}`),
+            d.votes.length ? voteList(d.votes) : h('p', { class: 'muted xs' }, 'Nobody has voted yet.')),
+          h('div', { class: 'field' }, h('span', {}, 'On boards'),
+            h('div', { class: 'stack tight' }, d.copies.map(c => h('button', {
+              class: 'btn sm board-jump', type: 'button', title: `Open ${d.title} on ${c.boardName}`, onclick: openOn(c),
+            }, `${c.boardName} →`))))),
+      ),
+    ].filter(Boolean));
+  };
+  draw(data);
+}
+
+function drawGame(root, data) {
+  const { game: g, notes } = data;
+  const music = data.music || [];
+  syncGame(g);
+  const m = g.meta || {};
+  const me = g.interests.find(i => i.userId === state.user.id) || { level: 0, owns: false };
+
+  const act = async fn => {
+    try {
+      const d = await fn();
+      if (d && d.game) drawGame(root, d);
+    } catch (e) { toast(e.message); }
+  };
+  const setInterest = (level, owns) => act(() => api('PUT', `/games/${g.id}/interest`, { level, owns }));
+
+  const img = safeUrl(m.headerUrl) || safeUrl(m.coverUrl);
+  const linkBtns = gameLinkButtons(m);
+  const facts = gameFacts(m);
 
   const editable = state.board.canEdit;
   const columnSel = h('select', {
@@ -3361,22 +3451,8 @@ function drawGame(root, data) {
   }, state.columns.map(c => h('option', { value: c.id }, c.name)));
   columnSel.value = g.columnId;
 
-  const levelBtns = h('div', { class: 'seg' }, LEVELS.map(l => h('button', {
-    class: `seg-btn ${l.cls}${me.level === l.level ? ' active' : ''}`,
-    onclick: () => setInterest(me.level === l.level ? 0 : l.level, me.owns),
-  }, l.label)));
-  const ownsBox = h('label', { class: 'check' },
-    h('input', { type: 'checkbox', checked: me.owns, onchange: e => setInterest(me.level, e.target.checked) }), 'I own it');
-
   // Votes: the board's own people first, then everyone else's.
   const votes = splitVotes(g);
-  const voteList = list => h('ul', { class: 'group' }, list.map(i => {
-    const l = levelInfo(i.level);
-    return h('li', {},
-      avatar(i.userId, i.username, `${l ? l.cls : 'none'}${i.owns ? ' owns' : ''}`),
-      h('span', { class: 'grow' }, i.username),
-      h('span', { class: 'muted xs' }, [l && l.label, i.owns && 'owns it'].filter(Boolean).join(' · ')));
-  }));
   const voteSection = (title, list, empty) => {
     const owners = list.filter(i => i.owns).length;
     return h('div', { class: 'field' }, h('span', {}, `${title}${owners ? ` · ${owners} own it` : ''}`),
@@ -3484,7 +3560,7 @@ function drawGame(root, data) {
         h('div', { class: 'notes' }, notes.map(n => noteItem(n, g, act)))),
       h('aside', { class: 'detail-side' },
         h('label', { class: 'field' }, h('span', {}, 'Column'), columnSel),
-        h('div', { class: 'field' }, h('span', {}, 'Your take'), levelBtns, ownsBox),
+        h('div', { class: 'field' }, h('span', {}, 'Your take'), takeButtons(me, setInterest)),
         voteSection('This board', votes.members, "Nobody on this board has voted yet."),
         votes.others.length ? voteSection('Everyone else', votes.others) : null,
         gameMusicSection(g, music, data.playlists || [], editable, act),

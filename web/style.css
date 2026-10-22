@@ -1082,6 +1082,7 @@ button.game-chip:hover, .feed-result:hover { background: var(--peach); }
 .hl-people .dot { margin-left: -4px; box-shadow: 0 0 0 1.5px var(--white); }
 .hl-more { margin-left: 4px; font: 700 10px var(--ui); color: var(--muted); }
 .hl-store { align-self: flex-start; font: 700 11px var(--ui); }
+.board-jump { justify-content: flex-start; text-align: left; }
 @media (max-width: 760px) {
   .hl-tile { width: 160px; }
 }

@@ -182,6 +182,8 @@ func (a *App) routes() http.Handler {
 	mux.HandleFunc("POST /api/games/{id}/music", a.auth(a.handleAddGameMusic))
 	mux.HandleFunc("DELETE /api/games/{id}/music/{musicId}", a.auth(a.handleRemoveGameMusic))
 	mux.HandleFunc("GET /api/highlights", a.auth(a.handleHighlights))
+	mux.HandleFunc("GET /api/games/{id}/everywhere", a.auth(a.handleGameEverywhere))
+	mux.HandleFunc("PUT /api/games/{id}/everywhere/interest", a.auth(a.handleSetInterestEverywhere))
 	mux.HandleFunc("GET /api/playlists", a.auth(a.handleListPlaylists))
 	mux.HandleFunc("POST /api/playlists", a.auth(a.handleCreatePlaylist))
 	mux.HandleFunc("GET /api/playlists/{id}", a.auth(a.handleGetPlaylist))
