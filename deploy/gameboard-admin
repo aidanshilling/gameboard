@@ -1,0 +1,5 @@
+#!/bin/sh
+# Run gameboard admin commands against the live database, e.g.
+#   gameboard-admin list-users
+#   gameboard-admin create-admin <username>
+exec sudo -u gameboard env DB_PATH=/var/lib/gameboard/gameboard.db /opt/gameboard/gameboard "$@"

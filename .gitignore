@@ -1,0 +1,7 @@
+gameboard
+gameboard.exe
+*.db
+*.db-shm
+*.db-wal
+.env
+deploy/out/

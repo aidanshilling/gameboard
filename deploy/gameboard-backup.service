@@ -1,0 +1,8 @@
+[Unit]
+Description=Back up the GameBoard database
+
+[Service]
+Type=oneshot
+User=gameboard
+Group=gameboard
+ExecStart=/bin/sh -c 'sqlite3 /var/lib/gameboard/gameboard.db ".backup /var/lib/gameboard/backups/gameboard-$(date +%%F).db" && find /var/lib/gameboard/backups -name "gameboard-*.db" -mtime +14 -delete'
