@@ -2520,7 +2520,7 @@ async function renderBoard(id) {
   const before = JSON.stringify(state.board);
   try {
     if (!(await loadBoard(id)) || seq !== routeSeq) return;
-    if (!state.dragging) drawColumns();
+    if (!boardBusy()) drawColumns();
     // Name, editors and permissions are in the header: redraw that too.
     if (JSON.stringify(state.board) !== before) refreshPage(seq);
   } catch {
@@ -2551,7 +2551,7 @@ async function loadBoard(id) {
 function startPolling(id) {
   stopPolling();
   state.pollTimer = setInterval(async () => {
-    if (document.hidden || state.dragging) return;
+    if (document.hidden || boardBusy()) return;
     try {
       if (await loadBoard(id)) drawColumns();
     } catch { /* try again next tick */ }
@@ -2772,10 +2772,13 @@ function openColumnsEditor(focusNew) {
   draw();
 }
 
-// removeGame takes a game off its board (after asking), along with its notes,
-// votes and music. Returns whether it went.
+// boardBusy is true while redrawing the columns would get in someone's way:
+// mid-drag, or with a "remove this game?" question showing on a card.
+const boardBusy = () => state.dragging || !!document.querySelector('.card-confirm');
+
+// removeGame takes a game off its board, along with its notes, votes and
+// music. Returns whether it went.
 async function removeGame(g) {
-  if (!confirm(`Remove "${g.title}" from ${state.board.name}? Its notes, votes and music go with it.`)) return false;
   try {
     await api('DELETE', `/games/${g.id}`);
     state.games = state.games.filter(x => x.id !== g.id);
@@ -2788,6 +2791,38 @@ async function removeGame(g) {
   }
 }
 
+// confirmRemoveOnCard covers a game's card with "Remove it? Remove / Cancel".
+// Escape, Cancel or a click anywhere else backs out.
+function confirmRemoveOnCard(card, g) {
+  if (card.querySelector('.card-confirm')) return;
+  const cancelBtn = h('button', { class: 'btn sm', type: 'button' }, 'Cancel');
+  const removeBtn = h('button', { class: 'btn sm danger', type: 'button' }, 'Remove');
+  const box = h('div', { class: 'card-confirm', role: 'alertdialog', 'aria-label': `Remove ${g.title}?` },
+    h('strong', {}, `Remove ${g.title}?`),
+    h('span', { class: 'xs' }, 'Its notes, votes and music go with it.'),
+    h('div', { class: 'row' }, cancelBtn, removeBtn));
+  const wasDraggable = card.draggable;
+  const close = () => {
+    document.removeEventListener('pointerdown', outside, true);
+    card.draggable = wasDraggable;
+    box.remove();
+  };
+  const outside = e => { if (!box.contains(e.target)) close(); };
+  // Clicks in here mustn't open the game underneath.
+  box.addEventListener('click', e => e.stopPropagation());
+  box.addEventListener('keydown', e => { if (e.key === 'Escape') { e.stopPropagation(); close(); } });
+  cancelBtn.addEventListener('click', close);
+  removeBtn.addEventListener('click', async () => {
+    removeBtn.disabled = cancelBtn.disabled = true;
+    removeBtn.textContent = 'Removing…';
+    if (!(await removeGame(g))) close();
+  });
+  card.draggable = false;
+  card.append(box);
+  document.addEventListener('pointerdown', outside, true);
+  cancelBtn.focus();
+}
+
 function gameCard(g) {
   const m = g.meta || {};
   const img = safeUrl(m.headerUrl) || safeUrl(m.coverUrl);
@@ -2796,7 +2831,7 @@ function gameCard(g) {
       img ? h('img', { src: img, alt: '', loading: 'lazy', draggable: 'false' }) : h('span', { class: 'placeholder' }, g.title.slice(0, 1)),
       state.board.canEdit ? h('button', {
         class: 'card-remove', type: 'button', title: 'Remove from board', 'aria-label': `Remove ${g.title} from the board`,
-        onclick: e => { e.stopPropagation(); removeGame(g); },
+        onclick: e => { e.stopPropagation(); confirmRemoveOnCard(card, g); },
       }) : null),
     h('div', { class: 'card-body' },
       h('div', { class: 'card-title' }, g.title),
@@ -3264,10 +3299,26 @@ function drawGame(root, data) {
           },
         }, 'Move')))));
   manage.open = state.manageOpen;
-  const removeBtn = h('button', {
-    class: 'btn danger sm block', type: 'button',
-    onclick: async () => { if (await removeGame(g)) closeModal(); },
-  }, 'Remove from board');
+  // Remove from board asks right there, in place of the button.
+  const removeBtn = h('div', {});
+  const askRemove = () => {
+    const yes = h('button', {
+      class: 'btn sm danger', type: 'button',
+      onclick: async () => {
+        yes.disabled = true;
+        yes.textContent = 'Removing…';
+        if (await removeGame(g)) closeModal();
+        else showRemove();
+      },
+    }, 'Remove');
+    removeBtn.replaceChildren(h('div', { class: 'remove-confirm' },
+      h('span', { class: 'xs' }, h('strong', {}, `Remove ${g.title}?`), ' Its notes, votes and music go with it.'),
+      h('div', { class: 'row end' }, h('button', { class: 'btn sm', type: 'button', onclick: showRemove }, 'Cancel'), yes)));
+    yes.focus();
+  };
+  const showRemove = () => removeBtn.replaceChildren(
+    h('button', { class: 'btn danger sm block', type: 'button', onclick: askRemove }, 'Remove from board'));
+  showRemove();
 
   root.replaceChildren(...[
     h('div', { class: 'hero' + (img ? '' : ' no-img') },

@@ -521,6 +521,7 @@ button.win-close::after { transform: translate(-50%, -50%) rotate(-45deg); }
 }
 
 .game-card {
+  position: relative;
   background: var(--white);
   border: 1px solid var(--ink);
   border-radius: 4px;
@@ -581,6 +582,38 @@ button.win-close::after { transform: translate(-50%, -50%) rotate(-45deg); }
   transform: translate(-50%, -50%) rotate(45deg);
 }
 .card-remove::after { transform: translate(-50%, -50%) rotate(-45deg); }
+/* "Remove this game?" laid over its card. */
+.card-confirm {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 10px;
+  text-align: center;
+  background: color-mix(in srgb, var(--rose) 35%, var(--paper));
+  background-image: radial-gradient(color-mix(in srgb, var(--ink) 10%, transparent) 0.7px, transparent 1px);
+  background-size: 3px 3px;
+  cursor: default;
+  animation: confirm-in 0.12s ease-out;
+}
+.card-confirm strong { font: 700 13px/1.3 var(--ui); overflow-wrap: anywhere; }
+.card-confirm .row { margin-top: 4px; justify-content: center; }
+@keyframes confirm-in { from { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .card-confirm { animation: none; } }
+/* The same question in the game window, in place of its button. */
+.remove-confirm {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--ink);
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--rose) 35%, var(--paper));
+}
 .placeholder { display: grid; place-items: center; height: 100%; font: 700 32px var(--ui); color: var(--muted); }
 .card-body { display: flex; flex-direction: column; gap: 6px; padding: 8px 9px 9px; }
 .card-title { font: 700 13px/1.25 var(--ui); }
