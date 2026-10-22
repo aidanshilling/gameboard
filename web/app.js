@@ -2772,12 +2772,32 @@ function openColumnsEditor(focusNew) {
   draw();
 }
 
+// removeGame takes a game off its board (after asking), along with its notes,
+// votes and music. Returns whether it went.
+async function removeGame(g) {
+  if (!confirm(`Remove "${g.title}" from ${state.board.name}? Its notes, votes and music go with it.`)) return false;
+  try {
+    await api('DELETE', `/games/${g.id}`);
+    state.games = state.games.filter(x => x.id !== g.id);
+    drawColumns();
+    toast(`Removed ${g.title}`, 'ok');
+    return true;
+  } catch (e) {
+    toast(e.message);
+    return false;
+  }
+}
+
 function gameCard(g) {
   const m = g.meta || {};
   const img = safeUrl(m.headerUrl) || safeUrl(m.coverUrl);
   const card = h('article', { class: 'game-card', draggable: state.board.canEdit ? 'true' : null, dataset: { id: g.id }, onclick: () => openGame(g.id) },
     h('div', { class: 'card-img' },
-      img ? h('img', { src: img, alt: '', loading: 'lazy' }) : h('span', { class: 'placeholder' }, g.title.slice(0, 1))),
+      img ? h('img', { src: img, alt: '', loading: 'lazy', draggable: 'false' }) : h('span', { class: 'placeholder' }, g.title.slice(0, 1)),
+      state.board.canEdit ? h('button', {
+        class: 'card-remove', type: 'button', title: 'Remove from board', 'aria-label': `Remove ${g.title} from the board`,
+        onclick: e => { e.stopPropagation(); removeGame(g); },
+      }) : null),
     h('div', { class: 'card-body' },
       h('div', { class: 'card-title' }, g.title),
       h('div', { class: 'badges' }, priceBadge(m), protonBadge(m), modeBadge(m)),
@@ -3242,19 +3262,12 @@ function drawGame(root, data) {
               toast(`Moved ${g.title}`, 'ok');
             } catch (ex) { toast(ex.message); }
           },
-        }, 'Move'))),
-      h('button', {
-        class: 'btn danger sm', onclick: async () => {
-          if (!confirm(`Remove ${g.title} and its notes from this board?`)) return;
-          try {
-            await api('DELETE', `/games/${g.id}`);
-            state.games = state.games.filter(x => x.id !== g.id);
-            drawColumns();
-            closeModal();
-          } catch (ex) { toast(ex.message); }
-        },
-      }, 'Delete game')));
+        }, 'Move')))));
   manage.open = state.manageOpen;
+  const removeBtn = h('button', {
+    class: 'btn danger sm block', type: 'button',
+    onclick: async () => { if (await removeGame(g)) closeModal(); },
+  }, 'Remove from board');
 
   root.replaceChildren(...[
     h('div', { class: 'hero' + (img ? '' : ' no-img') },
@@ -3276,7 +3289,8 @@ function drawGame(root, data) {
         h('div', { class: 'field' }, h('span', {}, 'Your take'), levelBtns, ownsBox),
         h('div', { class: 'field' }, h('span', {}, `The group${owners ? ` · ${owners} own it` : ''}`), group),
         gameMusicSection(g, music, data.playlists || [], editable, act),
-        editable ? manage : null)),
+        editable ? manage : null,
+        editable ? removeBtn : null)),
   ].filter(Boolean));
 }
 

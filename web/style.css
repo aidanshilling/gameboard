@@ -548,6 +548,39 @@ button.win-close::after { transform: translate(-50%, -50%) rotate(-45deg); }
   background-size: 3px 3px;
   mix-blend-mode: multiply;
 }
+/* Editors' remove box on a card: shows on hover (always on touch screens),
+   with the same drawn × as the window close boxes, red when pointed at. */
+.card-remove {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  z-index: 1;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 1px solid var(--ink);
+  border-radius: 3px;
+  background: var(--paper);
+  box-shadow: 1px 1px 0 var(--ink);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.1s;
+}
+.game-card:hover .card-remove, .game-card:focus-within .card-remove, .card-remove:focus-visible { opacity: 1; }
+@media (hover: none) { .card-remove { opacity: 1; } }
+.card-remove:hover, .card-remove:focus-visible { background: #ec8f95; outline: none; }
+.card-remove:active { background: #d9626a; }
+.card-remove::before, .card-remove::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 11px;
+  height: 1.5px;
+  background: var(--ink);
+  transform: translate(-50%, -50%) rotate(45deg);
+}
+.card-remove::after { transform: translate(-50%, -50%) rotate(-45deg); }
 .placeholder { display: grid; place-items: center; height: 100%; font: 700 32px var(--ui); color: var(--muted); }
 .card-body { display: flex; flex-direction: column; gap: 6px; padding: 8px 9px 9px; }
 .card-title { font: 700 13px/1.25 var(--ui); }
