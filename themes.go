@@ -16,6 +16,7 @@ import (
 
 var themePresets = map[string]bool{
 	"penguin": true, "poolsuite": true, "midnight": true, "terminal": true, "vaporwave": true, "win95": true,
+	"dracula": true, "monokai": true, "nord": true, "gruvbox": true, "solarizedLight": true,
 }
 
 // themeKeys are the colours a theme may set (the frontend maps them to CSS variables).

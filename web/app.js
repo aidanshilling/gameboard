@@ -676,6 +676,48 @@ const THEME_PRESETS = {
       periwinkle: '#c6c6ff', peach: '#ffd8a8', ice: '#a8d8ff', mint: '#a8ffc0', sun: '#ffff80', lilac: '#e0b0ff', rose: '#ffb0b0', stone: '#d4d0c8',
     },
   },
+  // Code editor themes, from each one's own palette. Faded text is a little
+  // lighter than the editors' comment colours so it stays readable here.
+  dracula: {
+    name: 'Dracula',
+    vars: {
+      desk: '#191a21', deskInk: '#f8f8f2', paper: '#282a36', surface: '#343746', ink: '#f8f8f2', muted: '#a4acd4',
+      accent: '#bd93f9', accentInk: '#21222c', beak: '#ff79c6', link: '#8be9fd',
+      periwinkle: '#3b3f5c', peach: '#4f3b30', ice: '#2b4652', mint: '#2a4836', sun: '#48492c', lilac: '#44365e', rose: '#57303f', stone: '#3a3c4e',
+    },
+  },
+  monokai: {
+    name: 'Monokai',
+    vars: {
+      desk: '#1e1f1c', deskInk: '#f8f8f2', paper: '#272822', surface: '#3e3d32', ink: '#f8f8f2', muted: '#b0ac94',
+      accent: '#a6e22e', accentInk: '#272822', beak: '#f92672', link: '#66d9ef',
+      periwinkle: '#38384f', peach: '#4f3a20', ice: '#22444d', mint: '#34461d', sun: '#4a4524', lilac: '#403459', rose: '#522338', stone: '#3e3d32',
+    },
+  },
+  nord: {
+    name: 'Nord',
+    vars: {
+      desk: '#242933', deskInk: '#eceff4', paper: '#2e3440', surface: '#3b4252', ink: '#eceff4', muted: '#aab3c5',
+      accent: '#88c0d0', accentInk: '#2e3440', beak: '#d08770', link: '#8fbcbb',
+      periwinkle: '#3d4760', peach: '#4d3d38', ice: '#33495a', mint: '#394a3b', sun: '#4c4636', lilac: '#463c52', rose: '#4d3439', stone: '#434c5e',
+    },
+  },
+  gruvbox: {
+    name: 'Gruvbox Dark',
+    vars: {
+      desk: '#1d2021', deskInk: '#ebdbb2', paper: '#282828', surface: '#3c3836', ink: '#ebdbb2', muted: '#a89984',
+      accent: '#fabd2f', accentInk: '#282828', beak: '#fe8019', link: '#83a598',
+      periwinkle: '#363a45', peach: '#4a3628', ice: '#2e3f3f', mint: '#394226', sun: '#4a3f22', lilac: '#45333d', rose: '#4a2b2a', stone: '#3c3836',
+    },
+  },
+  solarizedLight: {
+    name: 'Solarized Light',
+    vars: {
+      desk: '#eee8d5', deskInk: '#073642', paper: '#fdf6e3', surface: '#fffcf2', ink: '#073642', muted: '#586e75',
+      accent: '#2aa198', accentInk: '#002b36', beak: '#cb4b16', link: '#1b6aa1', // Solarized blue, darkened to read on cream
+      periwinkle: '#e2e1f2', peach: '#f6dfc9', ice: '#d5e6ef', mint: '#e3e8c4', sun: '#f3e5b0', lilac: '#ecdaea', rose: '#f5d3cf', stone: '#e6dfcb',
+    },
+  },
 };
 
 const hexToRgb = hex => [1, 3, 5].map(i => parseInt(hex.slice(i, i + 2), 16));
@@ -705,6 +747,7 @@ function applyTheme(vars) {
   root.style.setProperty('--orange-hi', mixHex(t.accent, t.surface, 0.7));
   const dark = luminance(t.paper) < 0.3;
   root.style.setProperty('--danger-ink', dark ? '#ffb8bd' : '#7d0f1c');
+  root.style.setProperty('--bad', dark ? '#ff6b75' : '#c3303b'); // red links and errors, readable on dark windows
   root.style.colorScheme = dark ? 'dark' : 'light';
   return true;
 }
