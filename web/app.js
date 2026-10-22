@@ -193,7 +193,22 @@ function interestText(i) {
   return `${i.username}: ${l ? l.label.toLowerCase() : 'no vote'}${i.owns ? ', owns it' : ''}`;
 }
 
-function interestScore(g) { return g.interests.reduce((s, i) => s + i.level, 0); }
+// A board's members are its owner and editors. Votes are split into theirs
+// and everyone else's: cards show only the board's own people.
+function boardMemberIds(b = state.board) {
+  return new Set([b.createdById, ...b.members.map(m => m.id)].filter(Boolean));
+}
+
+function splitVotes(g) {
+  const ids = boardMemberIds();
+  return {
+    members: g.interests.filter(i => ids.has(i.userId)),
+    others: g.interests.filter(i => !ids.has(i.userId)),
+  };
+}
+
+// interestScore ranks games for "Most wanted" order, by the board's own people.
+function interestScore(g) { return splitVotes(g).members.reduce((s, i) => s + i.level, 0); }
 
 function priceCents(g) {
   const p = g.meta && g.meta.price;
@@ -3002,12 +3017,18 @@ function modeBadge(m) {
   return null;
 }
 
+// interestDots shows the votes of the board's own people on a card, plus how
+// many others voted.
 function interestDots(g) {
-  if (!g.interests.length) return h('span', { class: 'muted xs' }, 'No votes yet');
-  return h('div', { class: 'dots' }, g.interests.map(i => {
+  const { members, others } = splitVotes(g);
+  const more = others.length
+    ? h('span', { class: 'muted xs', title: `${others.map(i => i.username).join(', ')} (not on this board) voted too` }, `+${others.length} other${others.length === 1 ? '' : 's'}`)
+    : null;
+  if (!members.length) return h('span', { class: 'muted xs' }, others.length ? 'No votes from this board yet' : 'No votes yet', more ? [' · ', more] : null);
+  return h('div', { class: 'dots' }, members.map(i => {
     const l = levelInfo(i.level);
     return avatar(i.userId, i.username, `${l ? l.cls : 'none'}${i.owns ? ' owns' : ''}`, interestText(i));
-  }));
+  }), more);
 }
 
 // Drag-and-drop between and within columns. The dragged card is moved in the
@@ -3347,16 +3368,20 @@ function drawGame(root, data) {
   const ownsBox = h('label', { class: 'check' },
     h('input', { type: 'checkbox', checked: me.owns, onchange: e => setInterest(me.level, e.target.checked) }), 'I own it');
 
-  const owners = g.interests.filter(i => i.owns).length;
-  const group = g.interests.length
-    ? h('ul', { class: 'group' }, g.interests.map(i => {
-      const l = levelInfo(i.level);
-      return h('li', {},
-        avatar(i.userId, i.username, `${l ? l.cls : 'none'}${i.owns ? ' owns' : ''}`),
-        h('span', { class: 'grow' }, i.username),
-        h('span', { class: 'muted xs' }, [l && l.label, i.owns && 'owns it'].filter(Boolean).join(' · ')));
-    }))
-    : h('p', { class: 'muted xs' }, 'Nobody has voted yet.');
+  // Votes: the board's own people first, then everyone else's.
+  const votes = splitVotes(g);
+  const voteList = list => h('ul', { class: 'group' }, list.map(i => {
+    const l = levelInfo(i.level);
+    return h('li', {},
+      avatar(i.userId, i.username, `${l ? l.cls : 'none'}${i.owns ? ' owns' : ''}`),
+      h('span', { class: 'grow' }, i.username),
+      h('span', { class: 'muted xs' }, [l && l.label, i.owns && 'owns it'].filter(Boolean).join(' · ')));
+  }));
+  const voteSection = (title, list, empty) => {
+    const owners = list.filter(i => i.owns).length;
+    return h('div', { class: 'field' }, h('span', {}, `${title}${owners ? ` · ${owners} own it` : ''}`),
+      list.length ? voteList(list) : h('p', { class: 'muted xs' }, empty));
+  };
 
   // Notes
   const noteInput = h('textarea', {
@@ -3460,7 +3485,8 @@ function drawGame(root, data) {
       h('aside', { class: 'detail-side' },
         h('label', { class: 'field' }, h('span', {}, 'Column'), columnSel),
         h('div', { class: 'field' }, h('span', {}, 'Your take'), levelBtns, ownsBox),
-        h('div', { class: 'field' }, h('span', {}, `The group${owners ? ` · ${owners} own it` : ''}`), group),
+        voteSection('This board', votes.members, "Nobody on this board has voted yet."),
+        votes.others.length ? voteSection('Everyone else', votes.others) : null,
         gameMusicSection(g, music, data.playlists || [], editable, act),
         editable ? manage : null,
         editable ? removeBtn : null)),
