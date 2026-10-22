@@ -1099,6 +1099,25 @@ button.win-collapse:focus-visible::before,
   .hl-tile { width: 160px; }
 }
 
+/* Movies */
+.music-chip > .poster, .feed-result > .poster {
+  flex: none;
+  width: 40px;
+  height: 60px;
+  object-fit: cover;
+  border: 1px solid var(--ink);
+  border-radius: 2px;
+}
+.feed-result > .poster { width: 28px; height: 42px; }
+.chip-ph.poster { display: grid; place-items: center; font-size: 16px; }
+.movie-chip .chip-title { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.movie-scores { font-weight: 700; }
+.movie-more { flex-basis: 100%; padding: 6px 2px 2px; border-top: 1px dotted var(--ink); }
+.movie-more p { margin: 0 0 4px; }
+.movie-list .playlist-art > img { object-fit: cover; }
+.compose-links { row-gap: 2px; }
+.compose-links + .row { margin-left: auto; } /* Post stays on the right when the row wraps */
+
 /* Playlists */
 .stack.tight { gap: 6px; }
 /* The chip's text starts from zero width so only the add-to-playlist row

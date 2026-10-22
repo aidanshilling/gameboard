@@ -91,7 +91,32 @@ CREATE TABLE IF NOT EXISTS game_music (
 	PRIMARY KEY (game_id, music_id)
 );
 
--- People's own playlists of songs from the music table, in order.
+-- Movies and series, as looked up on OMDb (by IMDb id). details is JSON:
+-- rating, runtime, genre, director, actors, plot, review scores.
+CREATE TABLE IF NOT EXISTS movies (
+	id         INTEGER PRIMARY KEY,
+	imdb_id    TEXT NOT NULL UNIQUE,
+	title      TEXT NOT NULL,
+	year       TEXT NOT NULL DEFAULT '',
+	kind       TEXT NOT NULL DEFAULT 'movie', -- movie | series | episode
+	poster     TEXT NOT NULL DEFAULT '',
+	details    TEXT NOT NULL DEFAULT '{}',
+	added_by   INTEGER REFERENCES users(id) ON DELETE SET NULL,
+	created_at INTEGER NOT NULL
+);
+
+-- Movies that go with a game (adaptations, inspirations...).
+CREATE TABLE IF NOT EXISTS game_movies (
+	game_id    INTEGER NOT NULL REFERENCES games(id) ON DELETE CASCADE,
+	movie_id   INTEGER NOT NULL REFERENCES movies(id) ON DELETE CASCADE,
+	added_by   INTEGER REFERENCES users(id) ON DELETE SET NULL,
+	position   REAL NOT NULL,
+	created_at INTEGER NOT NULL,
+	PRIMARY KEY (game_id, movie_id)
+);
+
+-- People's own playlists, of songs (playlist_items) or movies
+-- (playlist_movies) depending on playlists.kind.
 CREATE TABLE IF NOT EXISTS playlists (
 	id         INTEGER PRIMARY KEY,
 	user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -106,6 +131,13 @@ CREATE TABLE IF NOT EXISTS playlist_items (
 	position    REAL NOT NULL,
 	added_at    INTEGER NOT NULL,
 	PRIMARY KEY (playlist_id, music_id)
+);
+CREATE TABLE IF NOT EXISTS playlist_movies (
+	playlist_id INTEGER NOT NULL REFERENCES playlists(id) ON DELETE CASCADE,
+	movie_id    INTEGER NOT NULL REFERENCES movies(id) ON DELETE CASCADE,
+	position    REAL NOT NULL,
+	added_at    INTEGER NOT NULL,
+	PRIMARY KEY (playlist_id, movie_id)
 );
 
 -- Playlists on a game, next to its own songs (game_music).
@@ -253,6 +285,10 @@ func migrate(db *sql.DB) error {
 	if err := addColumn(db, "avatars", "pixel", "INTEGER NOT NULL DEFAULT 0"); err != nil {
 		return err
 	}
+	// What a playlist holds: "music" (songs) or "movie".
+	if err := addColumn(db, "playlists", "kind", "TEXT NOT NULL DEFAULT 'music'"); err != nil {
+		return err
+	}
 	// When the Steam price in meta was last checked (prices.go).
 	if err := addColumn(db, "games", "price_checked_at", "INTEGER NOT NULL DEFAULT 0"); err != nil {
 		return err
@@ -266,6 +302,7 @@ func migrate(db *sql.DB) error {
 		{"board_id", "INTEGER REFERENCES boards(id) ON DELETE CASCADE"},
 		{"music_id", "INTEGER REFERENCES music(id) ON DELETE SET NULL"},
 		{"playlist_id", "INTEGER REFERENCES playlists(id) ON DELETE SET NULL"},
+		{"movie_id", "INTEGER REFERENCES movies(id) ON DELETE SET NULL"},
 	} {
 		if err := addColumn(db, "posts", c[0], c[1]); err != nil {
 			return err

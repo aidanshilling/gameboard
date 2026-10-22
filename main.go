@@ -33,16 +33,19 @@ type Config struct {
 	TwitchClientID string // IGDB uses Twitch app credentials
 	TwitchSecret   string
 	SteamCountry   string // country code for Steam prices
+	OMDbKey        string // OMDb API key, for movies (omdbapi.com)
+	OMDbBase       string // OMDb's address, if not the real one (tests)
 }
 
 type App struct {
-	db      *sql.DB
-	cfg     Config
-	limiter *limiter // failed logins
-	signups *limiter // sign-up requests per IP
-	posts   *limiter // chat posts per user
-	lookups *limiter // new music links looked up per user
-	meta    *metaClient
+	db       *sql.DB
+	cfg      Config
+	limiter  *limiter // failed logins
+	signups  *limiter // sign-up requests per IP
+	posts    *limiter // chat posts per user
+	lookups  *limiter // new music links / movies looked up per user
+	searches *limiter // movie searches per user (OMDb allows 1,000 requests a day)
+	meta     *metaClient
 }
 
 func env(key, def string) string {
@@ -62,6 +65,8 @@ func loadConfig() Config {
 		TwitchClientID: os.Getenv("TWITCH_CLIENT_ID"),
 		TwitchSecret:   os.Getenv("TWITCH_CLIENT_SECRET"),
 		SteamCountry:   env("STEAM_COUNTRY", "US"),
+		OMDbKey:        os.Getenv("OMDB_API_KEY"),
+		OMDbBase:       os.Getenv("OMDB_BASE_URL"), // for testing against a stand-in
 	}
 }
 
@@ -82,13 +87,14 @@ func main() {
 	}
 
 	app := &App{
-		db:      db,
-		cfg:     cfg,
-		limiter: newLimiter(10, 15*time.Minute),
-		signups: newLimiter(5, time.Hour),
-		posts:   newLimiter(15, 5*time.Minute),
-		lookups: newLimiter(30, 5*time.Minute),
-		meta:    newMetaClient(cfg),
+		db:       db,
+		cfg:      cfg,
+		limiter:  newLimiter(10, 15*time.Minute),
+		signups:  newLimiter(5, time.Hour),
+		posts:    newLimiter(15, 5*time.Minute),
+		lookups:  newLimiter(30, 5*time.Minute),
+		searches: newLimiter(60, 5*time.Minute),
+		meta:     newMetaClient(cfg),
 	}
 	srv := &http.Server{
 		Addr:              cfg.Addr,
@@ -181,6 +187,11 @@ func (a *App) routes() http.Handler {
 	mux.HandleFunc("GET /api/music/shares", a.auth(a.handleMusicShares))
 	mux.HandleFunc("POST /api/games/{id}/music", a.auth(a.handleAddGameMusic))
 	mux.HandleFunc("DELETE /api/games/{id}/music/{musicId}", a.auth(a.handleRemoveGameMusic))
+	mux.HandleFunc("GET /api/movies/search", a.auth(a.handleMovieSearch))
+	mux.HandleFunc("POST /api/movies/resolve", a.auth(a.handleResolveMovie))
+	mux.HandleFunc("GET /api/movies/shares", a.auth(a.handleMovieShares))
+	mux.HandleFunc("POST /api/games/{id}/movies", a.auth(a.handleAddGameMovie))
+	mux.HandleFunc("DELETE /api/games/{id}/movies/{movieId}", a.auth(a.handleRemoveGameMovie))
 	mux.HandleFunc("GET /api/highlights", a.auth(a.handleHighlights))
 	mux.HandleFunc("GET /api/games/{id}/everywhere", a.auth(a.handleGameEverywhere))
 	mux.HandleFunc("PUT /api/games/{id}/everywhere/interest", a.auth(a.handleSetInterestEverywhere))
@@ -191,7 +202,7 @@ func (a *App) routes() http.Handler {
 	mux.HandleFunc("DELETE /api/playlists/{id}", a.auth(a.handleDeletePlaylist))
 	mux.HandleFunc("POST /api/playlists/{id}/items", a.auth(a.handleAddPlaylistItem))
 	mux.HandleFunc("PUT /api/playlists/{id}/items", a.auth(a.handleOrderPlaylist))
-	mux.HandleFunc("DELETE /api/playlists/{id}/items/{musicId}", a.auth(a.handleRemovePlaylistItem))
+	mux.HandleFunc("DELETE /api/playlists/{id}/items/{itemId}", a.auth(a.handleRemovePlaylistItem))
 	mux.HandleFunc("POST /api/games/{id}/playlists", a.auth(a.handleAddGamePlaylist))
 	mux.HandleFunc("DELETE /api/games/{id}/playlists/{playlistId}", a.auth(a.handleRemoveGamePlaylist))
 	mux.HandleFunc("GET /api/boards/{id}/feed", a.auth(a.handleBoardFeed))
@@ -304,6 +315,7 @@ func (a *App) sweepExpired(ctx context.Context) {
 		}
 		a.sweepTicker()
 		a.sweepMusic()
+		a.sweepMovies()
 		select {
 		case <-ctx.Done():
 			return

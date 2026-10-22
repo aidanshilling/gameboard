@@ -93,6 +93,8 @@ type metaClient struct {
 	country      string
 	twitchID     string
 	twitchSecret string
+	omdbKey      string
+	omdbBase     string // OMDb's address; only tests change it
 	mu           sync.Mutex
 	token        string
 	tokenExp     time.Time
@@ -104,6 +106,8 @@ func newMetaClient(cfg Config) *metaClient {
 		country:      cfg.SteamCountry,
 		twitchID:     cfg.TwitchClientID,
 		twitchSecret: cfg.TwitchSecret,
+		omdbKey:      cfg.OMDbKey,
+		omdbBase:     cfg.OMDbBase,
 	}
 }
 

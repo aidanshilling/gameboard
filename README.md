@@ -19,6 +19,7 @@ A small self-hosted app for a group of friends to plan which games to buy and pl
   The same game on several boards counts once. Steam prices are re-checked in the background, 100 games at a time every half hour, for any price over 6 hours old.
 - A site-wide chat, plus one per board. Posts can link a game or a song.
 - Music: paste Spotify or YouTube (Music) links into chat, or give a game a soundtrack. Everything plays in a small floating player with a queue and a volume slider (YouTube only). The Music page lists everything shared and has playlists: mix songs from both services, then link a playlist in chat or put it on a game. Only a playlist's owner can change it. Spotify plays 30-second previews unless you're logged in to Spotify in the same browser; the player shows a "Log in to Spotify" button when that happens. Some browsers, like Safari, keep that login away from players on other sites.
+- Movies: find movies and series on OMDb by title (or paste an IMDb link). You can share them in chat, put them on games, and keep movie playlists. Each one shows its year, length, rating, genre and IMDb / Rotten Tomatoes / Metacritic scores, with its plot and cast a click away, and links to IMDb and to JustWatch for where to stream it.
 - A weekly ticker along the bottom, profile pictures and themes.
 
 It runs as one Go binary with the frontend embedded, plus one SQLite file. No CGO and no Node build step.
@@ -83,6 +84,7 @@ On the server (`gcloud compute ssh gameboard`):
 | `DB_PATH` | `gameboard.db` | SQLite file path |
 | `ALLOW_SIGNUPS` | `true` | `false` disables account requests entirely (admins create accounts) |
 | `TWITCH_CLIENT_ID` / `TWITCH_CLIENT_SECRET` | *(empty)* | Turns on IGDB (see below) |
+| `OMDB_API_KEY` | *(empty)* | Turns on Movies (see below) |
 | `STEAM_COUNTRY` | `US` | Country code for Steam prices (`GB`, `DE`, `CA`, …) |
 | `COOKIE_SECURE` | `auto` | `true` when served over HTTPS. `auto` detects TLS, or `X-Forwarded-Proto` when `TRUST_PROXY=true`. |
 | `TRUST_PROXY` | `false` | Set to `true` behind a reverse proxy (Caddy, nginx) so client IPs and HTTPS are detected correctly |
@@ -96,6 +98,16 @@ IGDB is free but uses Twitch app credentials:
 3. Copy the Client ID, generate a Client Secret, and set them as `TWITCH_CLIENT_ID` and `TWITCH_CLIENT_SECRET`.
 
 Without these, everything still works using Steam and ProtonDB data only.
+
+### Enabling Movies
+
+Movies come from OMDb, which needs a free API key:
+
+1. Request one at <https://www.omdbapi.com/apikey.aspx> (the free tier allows 1,000 requests a day).
+2. Click the activation link OMDb emails you.
+3. Set the key as `OMDB_API_KEY`. On the server, that means adding a line to `/etc/gameboard/env` and running `sudo systemctl restart gameboard`.
+
+Without a key, the Movies page says it's switched off and everything else works as usual. Searches are limited to 60 per person per 5 minutes, and a movie is only looked up the first time anyone picks it, which keeps use well inside the free tier. The key never appears in logs or error messages.
 
 ## HTTPS
 
@@ -135,7 +147,8 @@ sqlite3 gameboard.db ".backup backup.db"
 - **Games:** up to 300 per board.
 - **Notes:** up to 200 per game.
 - **Music:** up to 20 songs and 10 playlists per game. Each person can look up 30 new links per 5 minutes.
-- **Playlists:** up to 50 per person, 200 songs each.
+- **Playlists:** up to 50 music and 50 movie playlists per person, 200 songs or movies each.
+- **Movies:** up to 20 movies and 10 movie playlists per game.
 
 Disk isn't the constraint; a game with its metadata is about 1.5 KB. These caps keep boards quick to load and cheap to poll. They live at the top of `handlers.go`.
 
@@ -165,7 +178,8 @@ members.go    board editors and join requests
 columns.go    per-board columns
 feed.go       site and board chat
 music.go      Spotify / YouTube links, game soundtracks, the Music page
-playlists.go  people's own playlists
+movies.go     OMDb movies: search, chat links, game movies, the Movies page
+playlists.go  people's own playlists (songs or movies)
 highlights.go Top Games (most wanted, most owned, on sale for you)
 prices.go     background Steam price checks
 ticker.go     the weekly ticker

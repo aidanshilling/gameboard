@@ -306,14 +306,16 @@ async function route() {
   if (!state.avatarsAt) await loadAvatars();
   else if (Date.now() - state.avatarsAt > 60000) loadAvatars();
   const m = location.hash.match(/^#\/board\/(\d+)/);
-  const music = location.hash.match(/^#\/music(?:\/(playlists)|\/playlist\/(\d+))?$/);
+  // #/music and #/movies, each with /playlists and /playlist/<id>.
+  const music = location.hash.match(/^#\/(music|movies)(?:\/(playlists)|\/playlist\/(\d+))?$/);
   state.adminSecret = null;
   state.onPlaylistChange = null;
   let page;
   if (m) page = () => renderBoard(Number(m[1]));
   else if (location.hash === '#/admin') page = renderAdmin;
-  else if (music && music[2]) page = () => renderPlaylistPage(Number(music[2]));
-  else if (music && music[1]) page = renderPlaylistsPage;
+  else if (music && music[3]) page = () => renderPlaylistPage(Number(music[3]));
+  else if (music && music[2]) page = () => renderPlaylistsPage(music[1] === 'movies' ? 'movie' : 'music');
+  else if (music && music[1] === 'movies') page = renderMoviesPage;
   else if (music) page = renderMusicPage;
   else page = renderBoards;
   state.currentPage = page;
@@ -969,6 +971,7 @@ function menubar(adminLink, modeSwitch) {
   const items = h('div', { class: 'menu-items' },
     h('a', { href: '#/', class: 'menu-item' }, 'Games'),
     h('a', { href: '#/music', class: 'menu-item' }, 'Music'),
+    h('a', { href: '#/movies', class: 'menu-item' }, 'Movies'),
     adminLink,
     modeSwitch,
     h('button', { class: 'menu-item', onclick: openProfileModal }, 'Profile'),
@@ -1113,6 +1116,7 @@ function chan() {
       key, boardId: key === 'site' ? null : feedBoard().id,
       posts: [], more: false, loadedAt: 0, etag: null, draft: '',
       game: null, picking: false, music: null, playlist: null, musicPicking: false,
+      movie: null, moviePlaylist: null, moviePicking: false,
     };
   }
   return state.channels[key];
@@ -1152,14 +1156,23 @@ function feedPanel() {
     class: 'link xs', type: 'button',
     onclick: () => { f.musicPicking = !f.musicPicking && !f.music && !f.playlist; drawMusicArea(musicArea, musicBtn); },
   });
+  const movieArea = h('div', { class: 'feed-link' });
+  const movieBtn = h('button', {
+    class: 'link xs', type: 'button',
+    onclick: () => { f.moviePicking = !f.moviePicking && !f.movie && !f.moviePlaylist; drawMovieArea(movieArea, movieBtn); },
+  });
   const postBtn = h('button', { class: 'btn primary sm', type: 'submit' }, 'Post');
   const form = h('form', {
     class: 'feed-compose',
     onsubmit: async e => {
       e.preventDefault();
       const body = f.draft.trim();
-      // A shared game or song can go out without a caption.
-      if (!body && !f.game && !f.music && !f.playlist) return;
+      // A shared game, song or movie can go out without a caption.
+      if (!body && !f.game && !f.music && !f.playlist && !f.movie && !f.moviePlaylist) return;
+      if (f.playlist && f.moviePlaylist) {
+        toast('A post can share one playlist; remove one of them');
+        return;
+      }
       postBtn.disabled = true;
       try {
         const g = f.game;
@@ -1169,7 +1182,8 @@ function feedPanel() {
           steamAppId: g && g.external ? g.steamAppId : undefined,
           igdbId: g && g.external ? g.igdbId : undefined,
           musicId: f.music ? f.music.id : undefined,
-          playlistId: f.playlist ? f.playlist.id : undefined,
+          playlistId: (f.playlist || f.moviePlaylist || {}).id,
+          movieId: f.movie ? f.movie.id : undefined,
         });
         f.posts.unshift(p);
         f.draft = '';
@@ -1178,10 +1192,14 @@ function feedPanel() {
         f.music = null;
         f.playlist = null;
         f.musicPicking = false;
+        f.movie = null;
+        f.moviePlaylist = null;
+        f.moviePicking = false;
         ta.value = '';
         updateCounter();
         drawLinkArea(linkArea, linkBtn);
         drawMusicArea(musicArea, musicBtn);
+        drawMovieArea(movieArea, movieBtn);
         drawFeed();
       } catch (ex) { toast(ex.message); } finally { postBtn.disabled = false; }
     },
@@ -1189,10 +1207,12 @@ function feedPanel() {
   ta,
   linkArea,
   musicArea,
-  h('div', { class: 'row between' }, h('div', { class: 'row' }, linkBtn, musicBtn), h('div', { class: 'row' }, counter, postBtn)));
+  movieArea,
+  h('div', { class: 'row between' }, h('div', { class: 'row compose-links' }, linkBtn, musicBtn, movieBtn), h('div', { class: 'row' }, counter, postBtn)));
   updateCounter();
   drawLinkArea(linkArea, linkBtn);
   drawMusicArea(musicArea, musicBtn);
+  drawMovieArea(movieArea, movieBtn);
 
   // Board chats can be read by anyone but only its editors can post.
   const compose = !board || state.feedTab !== 'board' || board.canEdit
@@ -1404,6 +1424,7 @@ function postItem(p, c) {
       canRemove ? h('button', { class: 'link xs danger', onclick: del }, mine ? 'Delete' : 'Remove') : null),
     p.body ? h('div', { class: 'post-body' }, linkify(p.body)) : null,
     p.music ? musicChip(p.music) : null,
+    p.movie ? movieChip(p.movie) : null,
     p.playlist ? playlistChip(p.playlist) : null,
     p.game ? gameChip(p.game) : null,
     p.link ? gameChip({ ...p.link, external: true }) : null,
@@ -1521,14 +1542,19 @@ function musicChip(m, onRemove, opts = {}) {
 
 // ---- our own playlists ----
 
-// loadPlaylists fetches everyone's playlists (summaries, no songs).
-async function loadPlaylists() {
-  state.playlists = await api('GET', '/playlists');
+// loadPlaylists fetches everyone's playlists of one kind ('music' or 'movie';
+// summaries, no songs or movies).
+async function loadPlaylists(kind = 'music') {
+  state.playlists = await api('GET', `/playlists?kind=${kind}`);
   return state.playlists;
 }
 
 const myPlaylists = list => list.filter(p => p.userId === state.user.id);
 const songCount = n => `${n} song${n === 1 ? '' : 's'}`;
+const movieCount = n => `${n} movie${n === 1 ? '' : 's'}`;
+const thingCount = (kind, n) => (kind === 'movie' ? movieCount(n) : songCount(n));
+// Where a kind of playlist lives: #/music/... or #/movies/...
+const playlistSection = kind => (kind === 'movie' ? 'movies' : 'music');
 
 async function playlistSongs(pl) {
   const full = await api('GET', `/playlists/${pl.id}`);
@@ -1556,33 +1582,38 @@ async function queuePlaylist(pl) {
 }
 
 // playlistChip shows one of our playlists: its name, owner and size, a link
-// to its page, and play / queue buttons. onRemove adds a remove button.
+// to its page, and (for songs) play / queue buttons. onRemove adds a remove
+// button.
 function playlistChip(pl, onRemove) {
   const thumb = safeUrl(pl.thumb);
-  const href = `#/music/playlist/${pl.id}`;
-  return h('div', { class: 'music-chip playlist-chip' },
+  const movies = pl.kind === 'movie';
+  const href = `#/${playlistSection(pl.kind)}/playlist/${pl.id}`;
+  return h('div', { class: 'music-chip playlist-chip' + (movies ? ' movie-list' : '') },
     h('a', { class: 'playlist-art', href, 'aria-hidden': 'true', tabindex: '-1' },
-      thumb ? h('img', { src: thumb, alt: '', loading: 'lazy' }) : h('span', { class: 'chip-ph' }, '♫')),
+      thumb ? h('img', { src: thumb, alt: '', loading: 'lazy' }) : h('span', { class: 'chip-ph' }, movies ? '🎬' : '♫')),
     h('span', { class: 'chip-text' },
       h('a', { class: 'chip-title', href, title: pl.name }, pl.name),
-      h('span', { class: 'muted xs' }, `Playlist · ${songCount(pl.count)} · by ${pl.username}`)),
+      h('span', { class: 'muted xs' }, `${movies ? 'Movie playlist' : 'Playlist'} · ${thingCount(pl.kind, pl.count)} · by ${pl.username}`)),
     h('span', { class: 'music-actions' },
-      h('button', { class: 'btn sm primary', type: 'button', title: 'Play the playlist', 'aria-label': `Play ${pl.name}`, disabled: !pl.count, onclick: () => playPlaylist(pl) }, '▶'),
-      h('button', { class: 'btn sm', type: 'button', title: 'Add it all to the queue', 'aria-label': `Queue ${pl.name}`, disabled: !pl.count, onclick: () => queuePlaylist(pl) }, '+'),
+      movies ? h('a', { class: 'btn sm', href, title: 'Open the playlist' }, 'Open') : [
+        h('button', { class: 'btn sm primary', type: 'button', title: 'Play the playlist', 'aria-label': `Play ${pl.name}`, disabled: !pl.count, onclick: () => playPlaylist(pl) }, '▶'),
+        h('button', { class: 'btn sm', type: 'button', title: 'Add it all to the queue', 'aria-label': `Queue ${pl.name}`, disabled: !pl.count, onclick: () => queuePlaylist(pl) }, '+'),
+      ],
       onRemove ? h('button', { class: 'link xs danger', type: 'button', title: 'Remove', 'aria-label': 'Remove', onclick: onRemove }, '×') : null));
 }
 
-// toggleAddToPlaylist opens (or closes) a row under a song for adding it to
-// one of your playlists, or to a new one.
-async function toggleAddToPlaylist(chip, m, toggle) {
+// toggleAddToPlaylist opens (or closes) a row under a song or movie for
+// adding it to one of your playlists of that kind, or to a new one.
+async function toggleAddToPlaylist(chip, m, toggle, kind = 'music') {
   const open = chip.querySelector('.chip-add');
   if (open) {
     clearOutsideClose(open);
     open.remove();
     return;
   }
+  const idField = kind === 'movie' ? 'movieId' : 'musicId';
   let mine;
-  try { mine = myPlaylists(await loadPlaylists()); } catch (e) { return toast(e.message); }
+  try { mine = myPlaylists(await loadPlaylists(kind)); } catch (e) { return toast(e.message); }
   const NEW = 'new';
   const pick = h('select', { 'aria-label': 'Playlist' },
     mine.map(p => h('option', { value: p.id }, `${p.name} (${p.count})`)),
@@ -1597,10 +1628,10 @@ async function toggleAddToPlaylist(chip, m, toggle) {
       let pl;
       if (pick.value === NEW) {
         if (!name.value.trim()) { name.focus(); return; }
-        pl = await api('POST', '/playlists', { name: name.value, musicId: m.id });
+        pl = await api('POST', '/playlists', { name: name.value, kind, [idField]: m.id });
         toast(`Made "${pl.name}" with ${m.title}`, 'ok');
       } else {
-        pl = await api('POST', `/playlists/${pick.value}/items`, { musicId: m.id });
+        pl = await api('POST', `/playlists/${pick.value}/items`, { [idField]: m.id });
         toast(`Added to ${pl.name}`, 'ok');
       }
       close();
@@ -2079,7 +2110,7 @@ async function renderMusicPage() {
   text.addEventListener('input', draw);
 
   shell(
-    musicHead('shared'),
+    sectionHead('music', 'shared'),
     win('Shared Music', { cls: 'music-page' },
       h('div', { class: 'row' }, who, text,
         h('button', {
@@ -2094,52 +2125,60 @@ async function renderMusicPage() {
   draw();
 }
 
-// musicHead is the Music pages' heading, with tabs for shared music and playlists.
-function musicHead(tab) {
+// sectionHead is the heading of the Music and Movies pages ('music' or
+// 'movies'), with tabs for what's been shared and the playlists.
+function sectionHead(section, tab) {
+  const movies = section === 'movies';
   const tabLink = (key, href, label) => h('a', { class: 'music-tab' + (tab === key ? ' on' : ''), href, 'aria-current': tab === key ? 'page' : null }, label);
   return h('div', { class: 'page-head' },
-    h('h1', {}, 'Music'),
-    h('nav', { class: 'music-tabs', 'aria-label': 'Music' },
-      tabLink('shared', '#/music', 'Shared'),
-      tabLink('playlists', '#/music/playlists', 'Playlists')),
+    h('h1', {}, movies ? 'Movies' : 'Music'),
+    h('nav', { class: 'music-tabs', 'aria-label': movies ? 'Movies' : 'Music' },
+      tabLink('shared', `#/${section}`, 'Shared'),
+      tabLink('playlists', `#/${section}/playlists`, 'Playlists')),
     h('p', { class: 'muted' }, tab === 'shared'
       ? 'Everything shared in the chats and on games, newest first.'
-      : 'Mix songs from Spotify and YouTube into playlists, then share them in chat or put them on games.'));
+      : movies
+        ? 'Make lists of movies and series (a watchlist, a marathon), then share them in chat or put them on games.'
+        : 'Mix songs from Spotify and YouTube into playlists, then share them in chat or put them on games.'));
 }
 
-async function renderPlaylistsPage() {
-  const list = state.playlists = await pageData('/playlists');
+async function renderPlaylistsPage(kind = 'music') {
+  const movies = kind === 'movie';
+  const section = playlistSection(kind);
+  const list = state.playlists = await pageData(`/playlists?kind=${kind}`);
   const mine = myPlaylists(list);
   const others = list.filter(p => p.userId !== state.user.id);
 
-  const name = h('input', { placeholder: 'Playlist name, e.g. "Valheim boss fights"', maxlength: 60, required: true, 'aria-label': 'Playlist name' });
+  const name = h('input', { placeholder: movies ? 'Playlist name, e.g. "Halloween marathon"' : 'Playlist name, e.g. "Valheim boss fights"', maxlength: 60, required: true, 'aria-label': 'Playlist name' });
   const create = h('form', {
     class: 'row',
     onsubmit: async e => {
       e.preventDefault();
       try {
-        const pl = await api('POST', '/playlists', { name: name.value });
-        location.hash = `#/music/playlist/${pl.id}`;
+        const pl = await api('POST', '/playlists', { name: name.value, kind });
+        location.hash = `#/${section}/playlist/${pl.id}`;
       } catch (ex) { toast(ex.message); }
     },
   }, name, h('button', { class: 'btn primary', type: 'submit' }, 'Create'));
 
-  const section = (title, items, empty) => [
+  const group = (title, items, empty) => [
     h('h3', { class: 'music-section' }, title),
     items.length ? h('div', { class: 'stack music-list' }, items.map(pl => playlistChip(pl))) : h('p', { class: 'muted xs' }, empty),
   ];
   shell(
-    musicHead('playlists'),
-    win('Playlists', { cls: 'music-page' },
+    sectionHead(section, 'playlists'),
+    win(movies ? 'Movie Playlists' : 'Playlists', { cls: 'music-page' },
       h('div', { class: 'field' }, h('span', {}, 'New playlist'), create),
-      section('Your playlists', mine, 'None yet. Make one above, or use ♫+ on any song.'),
-      section("Everyone else's", others, 'Nobody else has made one yet.')));
+      group('Your playlists', mine, movies ? 'None yet. Make one above, or use 🎬+ on any movie.' : 'None yet. Make one above, or use ♫+ on any song.'),
+      group("Everyone else's", others, 'Nobody else has made one yet.')));
 }
 
 async function renderPlaylistPage(id) {
   const first = await pageData(`/playlists/${id}`);
+  const movies = first.kind === 'movie';
+  const section = playlistSection(first.kind);
   const root = h('div', { class: 'playlist-page' });
-  shell(musicHead('playlists'), root);
+  shell(sectionHead(section, 'playlists'), root);
   const draw = pl => {
     const mine = pl.userId === state.user.id;
     const canDelete = mine || (state.user.isAdmin && state.user.adminMode);
@@ -2149,7 +2188,7 @@ async function renderPlaylistPage(id) {
     const move = (i, by) => {
       const ids = pl.items.map(m => m.id);
       [ids[i], ids[i + by]] = [ids[i + by], ids[i]];
-      act(() => api('PUT', `/playlists/${pl.id}/items`, { musicIds: ids }));
+      act(() => api('PUT', `/playlists/${pl.id}/items`, { ids }));
     };
     const rename = () => {
       const input = h('input', { value: pl.name, maxlength: 60, 'aria-label': 'Playlist name' });
@@ -2169,42 +2208,285 @@ async function renderPlaylistPage(id) {
       try {
         await api('DELETE', `/playlists/${pl.id}`);
         toast(`Deleted ${pl.name}`, 'ok');
-        location.hash = '#/music/playlists';
+        location.hash = `#/${section}/playlists`;
       } catch (e) { toast(e.message); }
     };
 
     const title = h('h2', { class: 'playlist-name' }, pl.name);
     const n = pl.items.length;
-    root.replaceChildren(win('Playlist', { cls: 'music-page' },
-      h('p', { class: 'xs' }, h('a', { href: '#/music/playlists' }, '◀ All playlists')),
+    const remove = m => (mine ? () => act(() => api('DELETE', `/playlists/${pl.id}/items/${m.id}`)) : null);
+    const arrows = (m, i) => (mine ? [
+      h('button', { class: 'btn sm', type: 'button', title: 'Move up', 'aria-label': `Move ${m.title} up`, disabled: i === 0, onclick: () => move(i, -1) }, '↑'),
+      h('button', { class: 'btn sm', type: 'button', title: 'Move down', 'aria-label': `Move ${m.title} down`, disabled: i === n - 1, onclick: () => move(i, 1) }, '↓'),
+    ] : null);
+    const empty = movies
+      ? (mine ? 'No movies yet. Search above, or use 🎬+ on any movie in the chat or on the Shared tab.' : 'No movies yet.')
+      : (mine ? 'No songs yet. Paste a link above, or use ♫+ on any song in the chat or on the Shared tab.' : 'No songs yet.');
+    root.replaceChildren(win(movies ? 'Movie Playlist' : 'Playlist', { cls: 'music-page' },
+      h('p', { class: 'xs' }, h('a', { href: `#/${section}/playlists` }, '◀ All playlists')),
       title,
-      h('p', { class: 'muted xs' }, `by ${pl.username} · ${songCount(n)} · updated ${ago(pl.updatedAt)}`),
+      h('p', { class: 'muted xs' }, `by ${pl.username} · ${thingCount(pl.kind, n)} · updated ${ago(pl.updatedAt)}`),
       h('div', { class: 'row' },
-        h('button', { class: 'btn primary', type: 'button', disabled: !n, onclick: () => playAll(pl.items) }, '▶ Play'),
-        h('button', { class: 'btn', type: 'button', disabled: !n, onclick: () => queuePlaylist(pl) }, '+ Queue all'),
+        movies ? null : [
+          h('button', { class: 'btn primary', type: 'button', disabled: !n, onclick: () => playAll(pl.items) }, '▶ Play'),
+          h('button', { class: 'btn', type: 'button', disabled: !n, onclick: () => queuePlaylist(pl) }, '+ Queue all'),
+        ],
         h('span', { class: 'spacer' }),
         mine ? h('button', { class: 'btn sm', type: 'button', onclick: rename }, 'Rename') : null,
         canDelete ? h('button', { class: 'btn sm danger', type: 'button', onclick: del }, 'Delete') : null),
-      mine ? h('div', { class: 'field' }, h('span', {}, 'Add a song'),
-        musicLinkBox(m => act(() => api('POST', `/playlists/${pl.id}/items`, { musicId: m.id })))) : null,
+      mine ? h('div', { class: 'field' }, h('span', {}, movies ? 'Add a movie' : 'Add a song'),
+        movies
+          ? movieLinkBox(mv => act(() => api('POST', `/playlists/${pl.id}/items`, { movieId: mv.id })))
+          : musicLinkBox(m => act(() => api('POST', `/playlists/${pl.id}/items`, { musicId: m.id })))) : null,
       n
-        ? h('ol', { class: 'playlist-items' }, pl.items.map((m, i) => h('li', {},
-          musicChip(m, mine ? () => act(() => api('DELETE', `/playlists/${pl.id}/items/${m.id}`)) : null, {
+        ? h('ol', { class: 'playlist-items' }, pl.items.map((m, i) => h('li', {}, movies
+          ? movieChip(m, remove(m), { extra: arrows(m, i) })
+          : musicChip(m, remove(m), {
             // ▶ on a song plays the playlist from there.
             onPlay: () => playAll(pl.items.slice(i)),
-            extra: mine ? [
-              h('button', { class: 'btn sm', type: 'button', title: 'Move up', 'aria-label': `Move ${m.title} up`, disabled: i === 0, onclick: () => move(i, -1) }, '↑'),
-              h('button', { class: 'btn sm', type: 'button', title: 'Move down', 'aria-label': `Move ${m.title} down`, disabled: i === n - 1, onclick: () => move(i, 1) }, '↓'),
-            ] : null,
+            extra: arrows(m, i),
           }))))
-        : h('p', { class: 'muted' }, mine
-          ? 'No songs yet. Paste a link above, or use ♫+ on any song in the chat or on the Shared tab.'
-          : 'No songs yet.')));
+        : h('p', { class: 'muted' }, empty)));
   };
   const load = async () => draw(await api('GET', `/playlists/${id}`));
   // Adding a song here with ♫+ (e.g. to this very playlist) shows straight away.
   state.onPlaylistChange = changed => { if (changed.id === id) load().catch(e => toast(e.message)); };
   draw(first);
+}
+
+// ---------- movies ----------
+
+// Movies and series come from OMDb: found by title (or a pasted IMDb link),
+// shared in chat, put on games and kept in movie playlists. There's nothing
+// to play, so each links to IMDb and to where it's streaming.
+
+const MOVIE_KINDS = { movie: 'Movie', series: 'Series', episode: 'Episode' };
+
+// whereToWatch searches JustWatch in the visitor's own country.
+function whereToWatch(mv) {
+  const region = ((navigator.language || 'en-US').split('-')[1] || 'us').toLowerCase();
+  const cc = region === 'gb' ? 'uk' : region;
+  return `https://www.justwatch.com/${cc}/search?q=${encodeURIComponent(mv.title)}`;
+}
+
+function posterThumb(mv) {
+  const poster = safeUrl(mv.poster);
+  return poster ? h('img', { class: 'poster', src: poster, alt: '', loading: 'lazy' }) : h('span', { class: 'chip-ph poster' }, '🎬');
+}
+
+// movieChip shows a movie: poster, year, length, genre, ratings, links to
+// IMDb and where to watch it, and buttons for its plot and cast and to add
+// it to a playlist. onRemove adds a remove button; opts.extra adds more (↑ ↓).
+function movieChip(mv, onRemove, opts = {}) {
+  const facts = [MOVIE_KINDS[mv.kind] !== 'Movie' ? MOVIE_KINDS[mv.kind] : null, mv.runtime, mv.rated, mv.genre].filter(Boolean);
+  const scores = [mv.imdbRating && `IMDb ${mv.imdbRating}`, mv.rottenTomatoes && `RT ${mv.rottenTomatoes}`, mv.metascore && `Metacritic ${mv.metascore}`].filter(Boolean);
+  const chip = h('div', { class: 'music-chip movie-chip' },
+    posterThumb(mv),
+    h('span', { class: 'chip-text' },
+      h('span', { class: 'chip-title', title: mv.title }, mv.title, mv.year ? h('span', { class: 'muted' }, ` (${mv.year})`) : null),
+      facts.length ? h('span', { class: 'muted xs' }, facts.join(' · ')) : null,
+      scores.length ? h('span', { class: 'xs movie-scores' }, scores.join(' · ')) : null,
+      h('span', { class: 'music-links xs' },
+        h('a', { href: safeUrl(mv.url), target: '_blank', rel: 'noopener noreferrer' }, 'IMDb ↗'),
+        ' · ', h('a', { href: whereToWatch(mv), target: '_blank', rel: 'noopener noreferrer', title: 'Search JustWatch for where to stream it' }, 'Where to watch ↗'))),
+    h('span', { class: 'music-actions' },
+      opts.extra,
+      mv.plot || mv.director || mv.actors ? h('button', {
+        class: 'btn sm', type: 'button', title: 'Plot and cast', 'aria-label': `About ${mv.title}`, 'aria-expanded': 'false',
+        onclick: e => {
+          const btn = e.currentTarget;
+          const open = chip.querySelector('.movie-more');
+          btn.setAttribute('aria-expanded', String(!open));
+          if (open) { open.remove(); return; }
+          chip.append(h('div', { class: 'movie-more xs' },
+            mv.plot ? h('p', {}, mv.plot) : null,
+            mv.director ? h('p', {}, h('strong', {}, 'Director: '), mv.director) : null,
+            mv.actors ? h('p', {}, h('strong', {}, 'Starring: '), mv.actors) : null));
+        },
+      }, 'ⓘ') : null,
+      h('button', { class: 'btn sm', type: 'button', title: 'Add to a movie playlist', 'aria-label': `Add ${mv.title} to a playlist`, onclick: e => toggleAddToPlaylist(chip, mv, e.currentTarget, 'movie') }, '🎬+'),
+      onRemove ? h('button', { class: 'link xs danger', type: 'button', title: 'Remove', 'aria-label': 'Remove', onclick: onRemove }, '×') : null));
+  return chip;
+}
+
+// movieLinkBox searches OMDb as you type (or takes a pasted IMDb link);
+// picking a result saves it and hands it to onMovie. With onPlaylist, it
+// also offers the movie playlists. It isn't a <form>, as it sits in the chat's.
+function movieLinkBox(onMovie, onCancel, onPlaylist) {
+  const input = h('input', {
+    placeholder: 'Search movies and series, or paste an IMDb link…', 'aria-label': 'Find a movie',
+    onkeydown: e => {
+      if (e.key === 'Enter') {
+        e.preventDefault(); // don't send the chat post around it
+        const first = results.querySelector('.feed-result');
+        if (first) first.click();
+      } else if (e.key === 'Escape' && onCancel) {
+        e.stopPropagation();
+        onCancel();
+      }
+    },
+  });
+  const results = h('div', { class: 'feed-results' });
+  let timer, seq = 0, picking = false;
+  const pick = hit => async () => {
+    if (picking) return;
+    picking = true;
+    results.querySelectorAll('.feed-result').forEach(b => { b.disabled = true; });
+    try {
+      await onMovie(await api('POST', '/movies/resolve', { imdbId: hit.imdbId }));
+    } catch (e) {
+      toast(e.message);
+      results.querySelectorAll('.feed-result').forEach(b => { b.disabled = false; });
+    } finally { picking = false; }
+  };
+  const search = async () => {
+    const my = ++seq;
+    const q = input.value.trim();
+    if (q.length < 2) {
+      results.replaceChildren();
+      return;
+    }
+    results.replaceChildren(h('p', { class: 'muted xs' }, 'Searching…'));
+    let hits;
+    try { hits = await api('GET', '/movies/search?q=' + encodeURIComponent(q)); } catch (e) {
+      if (my === seq) results.replaceChildren(h('p', { class: 'muted xs' }, e.message));
+      return;
+    }
+    if (my !== seq) return;
+    results.replaceChildren(...(hits.length
+      ? hits.map(hit => h('button', { type: 'button', class: 'feed-result', onclick: pick(hit) },
+        posterThumb(hit),
+        h('span', { class: 'chip-text' }, h('span', { class: 'chip-title' }, hit.title),
+          h('span', { class: 'muted xs' }, [hit.year, MOVIE_KINDS[hit.kind]].filter(Boolean).join(' · ')))))
+      : [h('p', { class: 'muted xs' }, 'Nothing found on OMDb.')]));
+  };
+  input.addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(search, 350); });
+  setTimeout(() => input.focus());
+  const box = [input, results];
+  if (onPlaylist) {
+    const sel = h('select', { 'aria-label': 'Link a movie playlist', disabled: true }, h('option', { value: '' }, 'Loading playlists…'));
+    loadPlaylists('movie').then(list => {
+      const mine = myPlaylists(list);
+      const others = list.filter(p => p.userId !== state.user.id);
+      const opt = p => h('option', { value: p.id }, `${p.name} (${movieCount(p.count)}${p.userId === state.user.id ? '' : `, by ${p.username}`})`);
+      sel.replaceChildren(
+        h('option', { value: '' }, list.length ? '…or pick a movie playlist' : 'No movie playlists yet (make one on the Movies page)'),
+        mine.length ? h('optgroup', { label: 'Your playlists' }, mine.map(opt)) : null,
+        others.length ? h('optgroup', { label: "Everyone else's" }, others.map(opt)) : null);
+      sel.disabled = !list.length;
+    }).catch(e => toast(e.message));
+    sel.addEventListener('change', async () => {
+      const pl = (state.playlists || []).find(p => String(p.id) === sel.value);
+      if (!pl) return;
+      sel.disabled = true;
+      try { await onPlaylist(pl); } catch (e) { toast(e.message); sel.disabled = false; }
+    });
+    box.push(sel);
+  }
+  return h('div', { class: 'stack tight movie-form' }, ...box);
+}
+
+// drawMovieArea shows the movie (or movie playlist) attached to the post
+// being written, or the search box.
+function drawMovieArea(area, toggle) {
+  const f = chan();
+  clearOutsideClose(area);
+  const redraw = () => drawMovieArea(area, toggle);
+  toggle.textContent = f.moviePicking ? 'Cancel' : '+ Link a movie';
+  toggle.hidden = !!(f.movie || f.moviePlaylist);
+  if (f.movie) {
+    area.replaceChildren(movieChip(f.movie, () => { f.movie = null; redraw(); }));
+    return;
+  }
+  if (f.moviePlaylist) {
+    area.replaceChildren(playlistChip(f.moviePlaylist, () => { f.moviePlaylist = null; redraw(); }));
+    return;
+  }
+  if (!f.moviePicking) {
+    area.replaceChildren();
+    return;
+  }
+  const close = () => { f.moviePicking = false; redraw(); };
+  closeOnOutside(area, toggle, close);
+  area.replaceChildren(movieLinkBox(
+    mv => { f.movie = mv; f.moviePicking = false; redraw(); },
+    close,
+    pl => { f.moviePlaylist = pl; f.moviePicking = false; redraw(); }));
+}
+
+// gameMoviesSection is a game's movies in its details window; the board's
+// editors can add and remove movies and movie playlists.
+function gameMoviesSection(g, movies, playlists, editable, act, enabled) {
+  let adding = null;
+  const total = movies.length + playlists.length;
+  const addBtn = editable && enabled ? h('button', {
+    class: 'link xs', type: 'button',
+    onclick: () => {
+      if (adding) {
+        adding.remove();
+        adding = null;
+        addBtn.textContent = '+ Add a movie';
+        return;
+      }
+      adding = movieLinkBox(
+        mv => act(() => api('POST', `/games/${g.id}/movies`, { movieId: mv.id })),
+        null,
+        pl => act(() => api('POST', `/games/${g.id}/playlists`, { playlistId: pl.id })));
+      addBtn.textContent = 'Cancel';
+      addBtn.after(adding);
+    },
+  }, '+ Add a movie') : null;
+  if (!total && !addBtn) return null; // nothing to show, nothing to add
+  return h('div', { class: 'field' },
+    h('span', {}, `Movies${total ? ` (${total})` : ''}`),
+    total
+      ? h('div', { class: 'stack music-list' },
+        playlists.map(pl => playlistChip(pl, editable ? () => act(() => api('DELETE', `/games/${g.id}/playlists/${pl.id}`)) : null)),
+        movies.map(mv => movieChip(mv, editable ? () => act(() => api('DELETE', `/games/${g.id}/movies/${mv.id}`)) : null)))
+      : h('p', { class: 'muted xs' }, 'Movies that go with this game: adaptations, inspirations, what to watch after.'),
+    addBtn);
+}
+
+// ---- the Movies page ----
+
+async function renderMoviesPage() {
+  const { enabled, shares } = await pageData('/movies/shares');
+  const people = [...new Set(shares.map(s => s.username).filter(Boolean))].sort();
+  const who = h('select', { 'aria-label': 'Shared by' }, h('option', { value: '' }, 'Everyone'), people.map(p => h('option', { value: p }, p)));
+  const text = h('input', { type: 'search', placeholder: 'Filter by title, genre, cast or game…', 'aria-label': 'Filter movies' });
+  const list = h('div', { class: 'music-shares' });
+  const where = s => {
+    if (s.where === 'game') {
+      return ['on ', h('a', { href: `#/board/${s.boardId}`, onclick: () => { state.pendingGame = s.gameId; } }, s.gameTitle), ` (${s.boardName})`];
+    }
+    return s.boardId ? ['in ', h('a', { href: `#/board/${s.boardId}` }, s.boardName), "'s chat"] : ['in chat'];
+  };
+  const draw = () => {
+    const q = text.value.trim().toLowerCase();
+    const shown = shares.filter(s => (!who.value || s.username === who.value)
+      && (!q || [s.movie.title, s.movie.genre, s.movie.actors, s.movie.director, s.gameTitle].join(' ').toLowerCase().includes(q)));
+    list.replaceChildren(...(shown.length
+      ? shown.map(s => h('div', { class: 'music-share' },
+        h('div', { class: 'muted xs' }, avatar(s.userId, s.username, 'none tiny'), ` ${s.username || 'someone'} shared `, where(s), ` · ${ago(s.at)}`),
+        movieChip(s.movie)))
+      : [h('p', { class: 'muted' }, shares.length ? 'Nothing matches that.' : 'No movies shared yet. Use "+ Link a movie" in the chat, or add one to a game.')]));
+  };
+  who.addEventListener('change', draw);
+  text.addEventListener('input', draw);
+  shell(
+    sectionHead('movies', 'shared'),
+    enabled ? null : moviesOffNotice(),
+    win('Shared Movies', { cls: 'music-page' }, h('div', { class: 'row' }, who, text), list));
+  draw();
+}
+
+// moviesOffNotice explains that movies need an OMDb key on the server.
+function moviesOffNotice() {
+  return win('Movies are switched off', { cls: 'music-page alert' },
+    h('p', {}, "Finding movies needs a free OMDb API key, and the server doesn't have one yet."),
+    state.user.isAdmin
+      ? h('p', { class: 'xs' }, 'Get one at omdbapi.com/apikey.aspx, then add OMDB_API_KEY=<your key> to /etc/gameboard/env on the server and restart it (sudo systemctl restart gameboard).')
+      : h('p', { class: 'xs' }, 'Ask an admin to set it up.'));
 }
 
 // ---------- ticker ----------
@@ -2993,6 +3275,7 @@ function gameCard(g) {
         interestDots(g),
         h('span', { class: 'note-count' },
           g.musicCount ? h('span', { title: `${g.musicCount} song(s) / playlist(s)` }, `♪ ${g.musicCount}`) : null,
+          g.movieCount ? h('span', { title: `${g.movieCount} movie(s) / movie playlist(s)` }, `🎬 ${g.movieCount}`) : null,
           g.noteCount ? h('span', { title: `${g.noteCount} note(s)` }, `✎ ${g.noteCount}`) : null))));
   if (!state.board.canEdit) return card;
   card.addEventListener('dragstart', e => {
@@ -3579,7 +3862,8 @@ function drawGame(root, data) {
         h('div', { class: 'field' }, h('span', {}, 'Your take'), takeButtons(me, setInterest)),
         voteSection('This board', votes.members, "Nobody on this board has voted yet."),
         votes.others.length ? voteSection('Everyone else', votes.others) : null,
-        gameMusicSection(g, music, data.playlists || [], editable, act),
+        gameMusicSection(g, music, (data.playlists || []).filter(p => p.kind !== 'movie'), editable, act),
+        gameMoviesSection(g, data.movies || [], (data.playlists || []).filter(p => p.kind === 'movie'), editable, act, data.moviesEnabled),
         editable ? manage : null,
         editable ? removeBtn : null)),
   ].filter(Boolean));
