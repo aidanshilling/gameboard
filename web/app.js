@@ -520,7 +520,8 @@ function openProfileModal() {
           h('div', { class: 'row' },
             h('button', { class: 'btn primary sm', onclick: () => fileInput.click() }, has ? 'Change picture' : 'Choose picture'),
             has ? h('button', { class: 'btn danger sm', onclick: remove }, 'Remove picture') : null))),
-      fileInput);
+      fileInput,
+      passwordSection());
   };
 
   const startCrop = file => {
@@ -924,24 +925,27 @@ async function openThemesModal() {
   draw();
 }
 
-function openPasswordModal() {
-  const current = h('input', { type: 'password', autocomplete: 'current-password', required: true, placeholder: 'Current password' });
-  const next = h('input', { type: 'password', autocomplete: 'new-password', required: true, minlength: 8, maxlength: 72, placeholder: 'New password (8+ characters)' });
-  const confirmPw = h('input', { type: 'password', autocomplete: 'new-password', required: true, placeholder: 'Confirm new password' });
+// passwordSection is the folded-up "Change password" part of the Profile window.
+function passwordSection() {
+  const current = h('input', { type: 'password', autocomplete: 'current-password', required: true, placeholder: 'Current password', 'aria-label': 'Current password' });
+  const next = h('input', { type: 'password', autocomplete: 'new-password', required: true, minlength: 8, maxlength: 72, placeholder: 'New password (8+ characters)', 'aria-label': 'New password' });
+  const confirmPw = h('input', { type: 'password', autocomplete: 'new-password', required: true, placeholder: 'Confirm new password', 'aria-label': 'Confirm new password' });
+  const save = h('button', { class: 'btn primary', type: 'submit' }, 'Save password');
   const form = h('form', {
     class: 'stack',
     onsubmit: async e => {
       e.preventDefault();
       if (next.value !== confirmPw.value) return toast('New passwords do not match');
+      save.disabled = true;
       try {
         await api('POST', '/password', { current: current.value, new: next.value });
         closeModal();
         toast('Password changed. Other sessions were logged out.', 'ok');
-      } catch (ex) { toast(ex.message); }
+      } catch (ex) { toast(ex.message); } finally { save.disabled = false; }
     },
-  }, current, next, confirmPw, h('button', { class: 'btn primary', type: 'submit' }, 'Save'));
-  openModal('Change Password', form);
-  current.focus();
+  }, current, next, confirmPw, save);
+  return h('details', { class: 'manage', ontoggle: e => { if (e.target.open) current.focus(); } },
+    h('summary', {}, 'Change password'), form);
 }
 
 // ---------- layout ----------
@@ -974,12 +978,12 @@ function menubar(adminLink, modeSwitch) {
     h('a', { href: '#/movies', class: 'menu-item' }, 'Movies'),
     adminLink,
     modeSwitch,
-    h('button', { class: 'menu-item', onclick: openProfileModal }, 'Profile'),
     h('button', { class: 'menu-item', onclick: openThemesModal }, 'Themes'),
-    h('button', { class: 'menu-item', onclick: openPasswordModal }, 'Password'),
     h('button', { class: 'menu-item', onclick: logout }, 'Log Out'),
     h('div', { class: 'spacer' }),
-    h('span', { class: 'menu-item static whoami' }, avatar(state.user.id, state.user.username, 'tiny'), state.user.username),
+    // Your picture and name open your profile (picture and password).
+    h('button', { class: 'menu-item whoami', type: 'button', title: 'Your profile: picture and password', onclick: openProfileModal },
+      avatar(state.user.id, state.user.username, 'tiny'), state.user.username),
     h('span', { class: 'menu-item static', id: 'clock' }, clockText()));
   const toggle = h('button', {
     class: 'menu-item menu-toggle', 'aria-expanded': 'false', 'aria-label': 'Menu',
